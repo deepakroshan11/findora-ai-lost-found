@@ -47,7 +47,7 @@ connect lost items with found items.
 ## 📦 Installation
 
 ### Backend
-
+```bash
 cd backend
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
