@@ -1,0 +1,44 @@
+# In VS Code, create a new file called .gitignore
+# Add this content:
+```
+
+**.gitignore content:**
+```
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+*.egg-info/
+
+# AI Models
+storage/models/*.h5
+*.h5
+*.pkl
+*.pth
+
+# Database
+*.db
+*.sqlite3
+
+# Node modules
+frontend/node_modules/
+node_modules/
+
+# Images (optional - remove if you want to track images)
+storage/images/*
+ai/storage/images/*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
