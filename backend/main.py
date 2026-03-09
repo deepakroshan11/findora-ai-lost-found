@@ -1,7 +1,7 @@
 """
 FINDORA - FastAPI Backend
 AI-Powered Lost & Found Platform
-(UPDATED: Stable Stats Endpoint)
+(UPDATED FOR RENDER DEPLOYMENT)
 """
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
@@ -35,23 +35,33 @@ app = FastAPI(
 )
 
 # ======================================================
-# CORS
+# CORS — Reads allowed origins from ENV for Render
 # ======================================================
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ======================================================
-# STORAGE
+# STORAGE — Uses /data on Render persistent disk
 # ======================================================
 BASE_DIR = os.path.dirname(__file__)
-STORAGE_DIR = os.path.join(BASE_DIR, "storage")
-IMAGES_DIR = os.path.join(STORAGE_DIR, "images")
 
+# On Render: use /data (persistent disk). Locally: use backend/storage
+if os.path.exists("/data"):
+    STORAGE_DIR = "/data/storage"
+else:
+    STORAGE_DIR = os.path.join(BASE_DIR, "storage")
+
+IMAGES_DIR = os.path.join(STORAGE_DIR, "images")
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
 app.mount("/storage/images", StaticFiles(directory=IMAGES_DIR), name="images")
@@ -195,27 +205,21 @@ async def get_matches(item_id: str):
     return [MatchResponse(**m) for m in matches]
 
 # ======================================================
-# STATS (SAFE + WORKING)
+# STATS
 # ======================================================
 @app.get("/api/stats")
 async def get_stats():
-    """
-    Safe statistics without requiring db.get_stats()
-    """
     try:
         items = db.get_all_items(status="active", limit=1000)
-
         lost = sum(1 for i in items if i.get("item_type") == "lost")
         found = sum(1 for i in items if i.get("item_type") == "found")
         matched = sum(1 for i in items if i.get("status") == "matched")
-
         return {
             "total_items": len(items),
             "lost_items": lost,
             "found_items": found,
             "matched_items": matched
         }
-
     except Exception as e:
         print("❌ Stats error:", e)
         raise HTTPException(status_code=500, detail="Stats calculation failed")
@@ -231,12 +235,11 @@ async def trigger_ai_processing(item_id: str):
 # ======================================================
 if __name__ == "__main__":
     import uvicorn
-
+    PORT = int(os.getenv("PORT", 8000))
     print("=" * 60)
     print("🚀 FINDORA - AI-POWERED LOST & FOUND PLATFORM")
     print("=" * 60)
-    print("📍 Backend API: http://localhost:8000")
-    print("📚 API Docs: http://localhost:8000/docs")
+    print(f"📍 Backend API: http://localhost:{PORT}")
+    print(f"📚 API Docs:    http://localhost:{PORT}/docs")
     print("=" * 60)
-
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, reload=False)

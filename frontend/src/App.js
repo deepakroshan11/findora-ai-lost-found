@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp, Filter, Clock, Sparkles } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+// ✅ DEPLOYMENT FIX: Reads from .env in local, from Vercel env var in production
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const FindoraApp = () => {
   const [activeTab, setActiveTab] = useState('home');
@@ -108,7 +109,6 @@ const FindoraApp = () => {
       setLoading(true);
       const allMatches = [];
 
-      // Fetch items first if not already loaded
       let itemsToCheck = items;
       if (items.length === 0) {
         const response = await fetch(`${API_BASE}/api/items`);
@@ -123,11 +123,8 @@ const FindoraApp = () => {
         if (!res.ok) continue;
         
         const data = await res.json();
-        const highConfidence = data.filter(
-          m => m.confidence_score >= 0.8
-        );
+        const highConfidence = data.filter(m => m.confidence_score >= 0.8);
 
-        // Add item details to each match for display
         const matchesWithDetails = highConfidence.map(match => ({
           ...match,
           sourceItem: item
@@ -293,7 +290,6 @@ const FindoraApp = () => {
     );
   };
 
-  // Filter items based on type and search query
   const filteredItems = items.filter(item => {
     const matchesType = filterType === 'all' || item.item_type === filterType;
     const matchesSearch = !searchQuery || 
@@ -388,27 +384,9 @@ const FindoraApp = () => {
         <h2 className="text-4xl font-bold mb-10 text-center text-gray-900">How It Works</h2>
         <div className="grid md:grid-cols-3 gap-8">
           {[
-            { 
-              num: 1, 
-              title: 'Upload & Describe', 
-              desc: 'Take a photo and describe your item with as much detail as possible', 
-              color: 'indigo',
-              icon: Upload
-            },
-            { 
-              num: 2, 
-              title: 'AI Analyzes', 
-              desc: 'Our advanced AI analyzes images, text, and location to find matches', 
-              color: 'purple',
-              icon: Search
-            },
-            { 
-              num: 3, 
-              title: 'Get Matched', 
-              desc: 'Receive instant notifications when a potential match is discovered', 
-              color: 'emerald',
-              icon: Bell
-            }
+            { num: 1, title: 'Upload & Describe', desc: 'Take a photo and describe your item with as much detail as possible', color: 'indigo', icon: Upload },
+            { num: 2, title: 'AI Analyzes', desc: 'Our advanced AI analyzes images, text, and location to find matches', color: 'purple', icon: Search },
+            { num: 3, title: 'Get Matched', desc: 'Receive instant notifications when a potential match is discovered', color: 'emerald', icon: Bell }
           ].map((step) => {
             const Icon = step.icon;
             return (
@@ -426,20 +404,11 @@ const FindoraApp = () => {
 
       <div className="mt-12 text-center">
         <div className="inline-flex items-center gap-6 bg-white px-8 py-4 rounded-full shadow-lg border border-gray-100">
-          <span className="flex items-center gap-2 text-sm text-gray-600">
-            <span>🤖</span>
-            <span className="font-medium">AI-Powered</span>
-          </span>
+          <span className="flex items-center gap-2 text-sm text-gray-600"><span>🤖</span><span className="font-medium">AI-Powered</span></span>
           <span className="w-px h-4 bg-gray-300"></span>
-          <span className="flex items-center gap-2 text-sm text-gray-600">
-            <span>🔒</span>
-            <span className="font-medium">Secure & Private</span>
-          </span>
+          <span className="flex items-center gap-2 text-sm text-gray-600"><span>🔒</span><span className="font-medium">Secure & Private</span></span>
           <span className="w-px h-4 bg-gray-300"></span>
-          <span className="flex items-center gap-2 text-sm text-gray-600">
-            <span>⚡</span>
-            <span className="font-medium">Fast Matching</span>
-          </span>
+          <span className="flex items-center gap-2 text-sm text-gray-600"><span>⚡</span><span className="font-medium">Fast Matching</span></span>
         </div>
       </div>
     </div>
@@ -458,47 +427,27 @@ const FindoraApp = () => {
         <div className="flex gap-4 p-2 bg-gray-100 rounded-2xl">
           <button
             onClick={() => setFormData({ ...formData, itemType: 'lost' })}
-            className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all ${
-              formData.itemType === 'lost' 
-                ? 'bg-rose-500 text-white shadow-lg scale-105' 
-                : 'text-gray-600 hover:bg-gray-200'
-            }`}
+            className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all ${formData.itemType === 'lost' ? 'bg-rose-500 text-white shadow-lg scale-105' : 'text-gray-600 hover:bg-gray-200'}`}
           >
             Lost Item
           </button>
           <button
             onClick={() => setFormData({ ...formData, itemType: 'found' })}
-            className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all ${
-              formData.itemType === 'found' 
-                ? 'bg-emerald-500 text-white shadow-lg scale-105' 
-                : 'text-gray-600 hover:bg-gray-200'
-            }`}
+            className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all ${formData.itemType === 'found' ? 'bg-emerald-500 text-white shadow-lg scale-105' : 'text-gray-600 hover:bg-gray-200'}`}
           >
             Found Item
           </button>
         </div>
 
         <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">
-            Item Photo <span className="text-rose-500">*</span>
-          </label>
-          <div className={`border-3 border-dashed rounded-2xl p-10 text-center transition-all ${
-            formErrors.image ? 'border-rose-300 bg-rose-50' : 'border-gray-300 hover:border-indigo-400 hover:bg-gray-50'
-          }`}>
+          <label className="block font-bold mb-3 text-lg text-gray-900">Item Photo <span className="text-rose-500">*</span></label>
+          <div className={`border-3 border-dashed rounded-2xl p-10 text-center transition-all ${formErrors.image ? 'border-rose-300 bg-rose-50' : 'border-gray-300 hover:border-indigo-400 hover:bg-gray-50'}`}>
             {previewUrl ? (
               <div className="relative">
-                <img 
-                  src={previewUrl} 
-                  alt="Preview" 
-                  className="max-h-96 mx-auto rounded-xl shadow-xl object-contain" 
-                />
+                <img src={previewUrl} alt="Preview" className="max-h-96 mx-auto rounded-xl shadow-xl object-contain" />
                 <button
-                  onClick={() => {
-                    setPreviewUrl(null);
-                    setFormData({ ...formData, image: null });
-                  }}
+                  onClick={() => { setPreviewUrl(null); setFormData({ ...formData, image: null }); }}
                   className="absolute top-4 right-4 bg-rose-500 text-white p-3 rounded-full hover:bg-rose-600 shadow-lg transition-all hover:scale-110"
-                  aria-label="Remove image"
                 >
                   <X size={20} />
                 </button>
@@ -508,57 +457,28 @@ const FindoraApp = () => {
                 <Upload size={64} className="mx-auto text-gray-400 mb-4" />
                 <p className="text-gray-700 text-xl font-medium mb-1">Click to upload image</p>
                 <p className="text-gray-500 text-sm">Max 10MB • JPG, PNG, WEBP</p>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/jpg,image/png,image/webp"
-                  onChange={handleImageChange}
-                  className="hidden"
-                  aria-label="Upload image"
-                />
+                <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={handleImageChange} className="hidden" />
               </label>
             )}
           </div>
-          {formErrors.image && (
-            <p className="mt-2 text-sm text-rose-600 flex items-center gap-1">
-              <AlertCircle size={16} />
-              {formErrors.image}
-            </p>
-          )}
+          {formErrors.image && <p className="mt-2 text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.image}</p>}
         </div>
 
         <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">
-            Title <span className="text-rose-500">*</span>
-          </label>
+          <label className="block font-bold mb-3 text-lg text-gray-900">Title <span className="text-rose-500">*</span></label>
           <input
             type="text"
             value={formData.title}
-            onChange={(e) => {
-              setFormData({ ...formData, title: e.target.value });
-              if (formErrors.title) setFormErrors({ ...formErrors, title: null });
-            }}
+            onChange={(e) => { setFormData({ ...formData, title: e.target.value }); if (formErrors.title) setFormErrors({ ...formErrors, title: null }); }}
             placeholder="e.g., Black Leather Wallet"
-            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg transition-all ${
-              formErrors.title ? 'border-rose-300 bg-rose-50' : 'border-gray-300'
-            }`}
+            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg transition-all ${formErrors.title ? 'border-rose-300 bg-rose-50' : 'border-gray-300'}`}
           />
-          {formErrors.title && (
-            <p className="mt-2 text-sm text-rose-600 flex items-center gap-1">
-              <AlertCircle size={16} />
-              {formErrors.title}
-            </p>
-          )}
+          {formErrors.title && <p className="mt-2 text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.title}</p>}
         </div>
 
         <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">
-            Category <span className="text-rose-500">*</span>
-          </label>
-          <select
-            value={formData.category}
-            onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-            className="w-full px-5 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg"
-          >
+          <label className="block font-bold mb-3 text-lg text-gray-900">Category <span className="text-rose-500">*</span></label>
+          <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} className="w-full px-5 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg">
             <option value="wallet">Wallet</option>
             <option value="phone">Phone</option>
             <option value="keys">Keys</option>
@@ -573,67 +493,36 @@ const FindoraApp = () => {
         </div>
 
         <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">
-            Description <span className="text-rose-500">*</span>
-          </label>
+          <label className="block font-bold mb-3 text-lg text-gray-900">Description <span className="text-rose-500">*</span></label>
           <textarea
             value={formData.description}
-            onChange={(e) => {
-              setFormData({ ...formData, description: e.target.value });
-              if (formErrors.description) setFormErrors({ ...formErrors, description: null });
-            }}
+            onChange={(e) => { setFormData({ ...formData, description: e.target.value }); if (formErrors.description) setFormErrors({ ...formErrors, description: null }); }}
             placeholder="Describe the item in detail: color, size, brand, distinctive features, where and when it was lost/found..."
             rows={5}
-            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg transition-all ${
-              formErrors.description ? 'border-rose-300 bg-rose-50' : 'border-gray-300'
-            }`}
+            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg transition-all ${formErrors.description ? 'border-rose-300 bg-rose-50' : 'border-gray-300'}`}
           />
           <div className="flex justify-between items-center mt-2">
-            {formErrors.description && (
-              <p className="text-sm text-rose-600 flex items-center gap-1">
-                <AlertCircle size={16} />
-                {formErrors.description}
-              </p>
-            )}
-            <p className="text-sm text-gray-500 ml-auto">
-              {formData.description.length} characters
-            </p>
+            {formErrors.description && <p className="text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.description}</p>}
+            <p className="text-sm text-gray-500 ml-auto">{formData.description.length} characters</p>
           </div>
         </div>
 
         <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">
-            Location <span className="text-rose-500">*</span>
-          </label>
+          <label className="block font-bold mb-3 text-lg text-gray-900">Location <span className="text-rose-500">*</span></label>
           <div className="flex gap-3">
             <input
               type="text"
               value={formData.location}
-              onChange={(e) => {
-                setFormData({ ...formData, location: e.target.value });
-                if (formErrors.location) setFormErrors({ ...formErrors, location: null });
-              }}
+              onChange={(e) => { setFormData({ ...formData, location: e.target.value }); if (formErrors.location) setFormErrors({ ...formErrors, location: null }); }}
               placeholder="e.g., Central Bus Station, Main Street, Downtown Mall"
-              className={`flex-1 px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg transition-all ${
-                formErrors.location ? 'border-rose-300 bg-rose-50' : 'border-gray-300'
-              }`}
+              className={`flex-1 px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg transition-all ${formErrors.location ? 'border-rose-300 bg-rose-50' : 'border-gray-300'}`}
             />
-            <button
-              onClick={getLocation}
-              disabled={loading}
-              className="px-6 py-4 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-lg hover:shadow-xl transition-all"
-              aria-label="Get current location"
-            >
+            <button onClick={getLocation} disabled={loading} className="px-6 py-4 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 flex items-center gap-2 disabled:opacity-50 font-medium shadow-lg hover:shadow-xl transition-all">
               <MapPin size={20} />
               <span className="hidden sm:inline">GPS</span>
             </button>
           </div>
-          {formErrors.location && (
-            <p className="mt-2 text-sm text-rose-600 flex items-center gap-1">
-              <AlertCircle size={16} />
-              {formErrors.location}
-            </p>
-          )}
+          {formErrors.location && <p className="mt-2 text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.location}</p>}
           {formData.latitude && (
             <p className="text-sm text-emerald-600 mt-2 font-medium flex items-center gap-1">
               <Check size={16} />
@@ -643,34 +532,20 @@ const FindoraApp = () => {
         </div>
 
         <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">
-            Contact Info <span className="text-rose-500">*</span>
-          </label>
+          <label className="block font-bold mb-3 text-lg text-gray-900">Contact Info <span className="text-rose-500">*</span></label>
           <input
             type="text"
             value={formData.contactInfo}
-            onChange={(e) => {
-              setFormData({ ...formData, contactInfo: e.target.value });
-              if (formErrors.contactInfo) setFormErrors({ ...formErrors, contactInfo: null });
-            }}
+            onChange={(e) => { setFormData({ ...formData, contactInfo: e.target.value }); if (formErrors.contactInfo) setFormErrors({ ...formErrors, contactInfo: null }); }}
             placeholder="Email address or phone number"
-            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg transition-all ${
-              formErrors.contactInfo ? 'border-rose-300 bg-rose-50' : 'border-gray-300'
-            }`}
+            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg transition-all ${formErrors.contactInfo ? 'border-rose-300 bg-rose-50' : 'border-gray-300'}`}
           />
-          {formErrors.contactInfo && (
-            <p className="mt-2 text-sm text-rose-600 flex items-center gap-1">
-              <AlertCircle size={16} />
-              {formErrors.contactInfo}
-            </p>
-          )}
+          {formErrors.contactInfo && <p className="mt-2 text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.contactInfo}</p>}
         </div>
 
         {formData.itemType === 'lost' && (
           <div>
-            <label className="block font-bold mb-3 text-lg text-gray-900">
-              Reward Amount (Optional)
-            </label>
+            <label className="block font-bold mb-3 text-lg text-gray-900">Reward Amount (Optional)</label>
             <div className="relative">
               <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-500 text-lg font-medium">$</span>
               <input
@@ -690,8 +565,8 @@ const FindoraApp = () => {
           onClick={handleSubmit}
           disabled={loading}
           className={`w-full py-6 rounded-2xl font-bold text-white text-xl shadow-xl ${
-            formData.itemType === 'lost' 
-              ? 'bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700' 
+            formData.itemType === 'lost'
+              ? 'bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700'
               : 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700'
           } ${loading ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105 transition-all hover:shadow-2xl'}`}
         >
@@ -712,7 +587,6 @@ const FindoraApp = () => {
     <div className="max-w-7xl mx-auto py-8 px-4">
       <div className="mb-8">
         <h2 className="text-5xl font-bold mb-6 text-gray-900">Browse Items</h2>
-        
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <div className="relative flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
@@ -724,42 +598,26 @@ const FindoraApp = () => {
               className="w-full pl-12 pr-4 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg"
             />
           </div>
-          
           <div className="flex gap-2">
-            <button
-              onClick={() => setFilterType('all')}
-              className={`px-6 py-4 rounded-xl font-semibold transition-all ${
-                filterType === 'all'
-                  ? 'bg-indigo-500 text-white shadow-lg'
-                  : 'bg-white text-gray-700 border-2 border-gray-300 hover:border-indigo-300'
-              }`}
-            >
-              All
-            </button>
-            <button
-              onClick={() => setFilterType('lost')}
-              className={`px-6 py-4 rounded-xl font-semibold transition-all ${
-                filterType === 'lost'
-                  ? 'bg-rose-500 text-white shadow-lg'
-                  : 'bg-white text-gray-700 border-2 border-gray-300 hover:border-rose-300'
-              }`}
-            >
-              Lost
-            </button>
-            <button
-              onClick={() => setFilterType('found')}
-              className={`px-6 py-4 rounded-xl font-semibold transition-all ${
-                filterType === 'found'
-                  ? 'bg-emerald-500 text-white shadow-lg'
-                  : 'bg-white text-gray-700 border-2 border-gray-300 hover:border-emerald-300'
-              }`}
-            >
-              Found
-            </button>
+            {['all', 'lost', 'found'].map((type) => (
+              <button
+                key={type}
+                onClick={() => setFilterType(type)}
+                className={`px-6 py-4 rounded-xl font-semibold transition-all capitalize ${
+                  filterType === type
+                    ? type === 'all' ? 'bg-indigo-500 text-white shadow-lg'
+                      : type === 'lost' ? 'bg-rose-500 text-white shadow-lg'
+                      : 'bg-emerald-500 text-white shadow-lg'
+                    : 'bg-white text-gray-700 border-2 border-gray-300 hover:border-indigo-300'
+                }`}
+              >
+                {type.charAt(0).toUpperCase() + type.slice(1)}
+              </button>
+            ))}
           </div>
         </div>
       </div>
-      
+
       {loading ? (
         <div className="text-center py-24">
           <div className="w-20 h-20 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
@@ -772,41 +630,26 @@ const FindoraApp = () => {
             {searchQuery || filterType !== 'all' ? 'No matching items found' : 'No items reported yet'}
           </p>
           <p className="text-gray-500 mb-8 text-lg">
-            {searchQuery || filterType !== 'all' 
-              ? 'Try adjusting your search or filters' 
-              : 'Be the first to report a lost or found item'}
+            {searchQuery || filterType !== 'all' ? 'Try adjusting your search or filters' : 'Be the first to report a lost or found item'}
           </p>
           {!searchQuery && filterType === 'all' && (
-            <button
-              onClick={() => setActiveTab('report')}
-              className="px-10 py-4 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 font-bold text-lg shadow-lg hover:shadow-xl transition-all hover:scale-105"
-            >
+            <button onClick={() => setActiveTab('report')} className="px-10 py-4 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 font-bold text-lg shadow-lg hover:shadow-xl transition-all hover:scale-105">
               Report First Item
             </button>
           )}
         </div>
       ) : (
         <>
-          <p className="text-gray-600 mb-6 text-lg">
-            Showing {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
-          </p>
+          <p className="text-gray-600 mb-6 text-lg">Showing {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}</p>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredItems.map((item) => (
-              <div 
-                key={item.item_id} 
-                className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-2xl transition-all hover:scale-105 border border-gray-100"
-              >
+              <div key={item.item_id} className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-2xl transition-all hover:scale-105 border border-gray-100">
                 <div className="relative h-64 bg-gradient-to-br from-gray-100 to-gray-200">
                   {item.image_path && (
-                    <img 
-                      src={`${API_BASE}${item.image_path}`} 
-                      alt={item.title} 
-                      className="w-full h-full object-cover" 
-                    />
+                    // ✅ Image URLs now point to Render backend in production
+                    <img src={`${API_BASE}${item.image_path}`} alt={item.title} className="w-full h-full object-cover" />
                   )}
-                  <div className={`absolute top-4 right-4 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-xl ${
-                    item.item_type === 'lost' ? 'bg-rose-500' : 'bg-emerald-500'
-                  }`}>
+                  <div className={`absolute top-4 right-4 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-xl ${item.item_type === 'lost' ? 'bg-rose-500' : 'bg-emerald-500'}`}>
                     {item.item_type === 'lost' ? 'LOST' : 'FOUND'}
                   </div>
                 </div>
@@ -819,11 +662,7 @@ const FindoraApp = () => {
                   </div>
                   <div className="flex items-center text-xs text-gray-400 mb-4">
                     <Clock size={16} className="mr-1" />
-                    {new Date(item.created_at).toLocaleDateString('en-US', { 
-                      year: 'numeric', 
-                      month: 'short', 
-                      day: 'numeric' 
-                    })}
+                    {new Date(item.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                   </div>
                   {item.reward_amount > 0 && (
                     <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl px-4 py-3 text-emerald-700 font-bold text-sm flex items-center justify-between">
@@ -847,9 +686,7 @@ const FindoraApp = () => {
           <Sparkles className="text-purple-600" size={48} />
           <h2 className="text-5xl font-bold text-gray-900">AI Matches</h2>
         </div>
-        <p className="text-lg text-gray-600">
-          High-confidence matches found by our AI (80%+ confidence score)
-        </p>
+        <p className="text-lg text-gray-600">High-confidence matches found by our AI (80%+ confidence score)</p>
       </div>
 
       {loading ? (
@@ -861,33 +698,21 @@ const FindoraApp = () => {
         <div className="text-center py-24 bg-white rounded-3xl border-2 border-dashed border-gray-300">
           <Sparkles size={80} className="mx-auto text-gray-300 mb-6" />
           <p className="text-2xl text-gray-700 font-bold mb-2">No high-confidence matches yet</p>
-          <p className="text-gray-500 text-lg mb-8">
-            Our AI will notify you when potential matches are found
-          </p>
-          <button
-            onClick={() => setActiveTab('report')}
-            className="px-10 py-4 bg-purple-500 text-white rounded-xl hover:bg-purple-600 font-bold text-lg shadow-lg hover:shadow-xl transition-all hover:scale-105"
-          >
+          <p className="text-gray-500 text-lg mb-8">Our AI will notify you when potential matches are found</p>
+          <button onClick={() => setActiveTab('report')} className="px-10 py-4 bg-purple-500 text-white rounded-xl hover:bg-purple-600 font-bold text-lg shadow-lg hover:shadow-xl transition-all hover:scale-105">
             Report an Item
           </button>
         </div>
       ) : (
         <div className="grid md:grid-cols-2 gap-6">
           {matches.map((match, index) => (
-            <div 
-              key={index} 
-              className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-all border border-gray-100"
-            >
+            <div key={index} className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-all border border-gray-100">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <Sparkles className="text-purple-600" size={24} />
                   <h3 className="text-xl font-bold text-gray-900">Match Found</h3>
                 </div>
-                <div className={`px-4 py-2 rounded-xl text-white text-sm font-bold ${
-                  match.confidence_score >= 0.9 
-                    ? 'bg-emerald-500' 
-                    : 'bg-purple-500'
-                }`}>
+                <div className={`px-4 py-2 rounded-xl text-white text-sm font-bold ${match.confidence_score >= 0.9 ? 'bg-emerald-500' : 'bg-purple-500'}`}>
                   {match.confidence_score >= 0.9 ? 'High Match' : 'Good Match'}
                 </div>
               </div>
@@ -895,46 +720,24 @@ const FindoraApp = () => {
               {match.sourceItem && (
                 <div className="mb-6 p-4 bg-gray-50 rounded-xl">
                   <p className="text-sm text-gray-500 mb-2">Source Item</p>
-                  <h4 className="font-bold text-lg text-gray-900 mb-1">
-                    {match.sourceItem.title}
-                  </h4>
-                  <p className="text-sm text-gray-600 line-clamp-2">
-                    {match.sourceItem.description}
-                  </p>
+                  <h4 className="font-bold text-lg text-gray-900 mb-1">{match.sourceItem.title}</h4>
+                  <p className="text-sm text-gray-600 line-clamp-2">{match.sourceItem.description}</p>
                 </div>
               )}
 
               <div className="space-y-4">
                 <div>
-                  <p className="text-sm font-semibold text-gray-700 mb-2">
-                    Match Confidence
-                  </p>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Match Confidence</p>
                   <div className="w-full bg-gray-200 h-6 rounded-full overflow-hidden">
                     <div
-                      className={`h-6 rounded-full transition-all duration-500 ${
-                        match.confidence_score >= 0.9 
-                          ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' 
-                          : 'bg-gradient-to-r from-purple-500 to-purple-600'
-                      }`}
-                      style={{
-                        width: `${Math.round(match.confidence_score * 100)}%`
-                      }}
+                      className={`h-6 rounded-full transition-all duration-500 ${match.confidence_score >= 0.9 ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' : 'bg-gradient-to-r from-purple-500 to-purple-600'}`}
+                      style={{ width: `${Math.round(match.confidence_score * 100)}%` }}
                     />
                   </div>
-                  <p className={`mt-2 text-2xl font-bold ${
-                    match.confidence_score >= 0.9 ? 'text-emerald-700' : 'text-purple-700'
-                  }`}>
+                  <p className={`mt-2 text-2xl font-bold ${match.confidence_score >= 0.9 ? 'text-emerald-700' : 'text-purple-700'}`}>
                     {Math.round(match.confidence_score * 100)}%
                   </p>
                 </div>
-
-                {match.matched_item_id && (
-                  <div className="pt-4 border-t border-gray-200">
-                    <p className="text-sm text-gray-500">
-                      Matched Item ID: <span className="font-mono text-gray-700">{match.matched_item_id}</span>
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           ))}
@@ -954,16 +757,11 @@ const FindoraApp = () => {
               <Search size={32} className="text-white" />
             </div>
             <div>
-              <h1 className="text-3xl font-black bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-                Findora
-              </h1>
+              <h1 className="text-3xl font-black bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Findora</h1>
               <p className="text-xs text-gray-500 font-medium">AI-Powered Platform</p>
             </div>
           </div>
-          <button 
-            className="relative p-3 hover:bg-gray-100 rounded-xl transition-colors"
-            aria-label="Notifications"
-          >
+          <button className="relative p-3 hover:bg-gray-100 rounded-xl transition-colors" aria-label="Notifications">
             <Bell size={26} />
             <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse"></span>
           </button>
@@ -981,11 +779,7 @@ const FindoraApp = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-4 font-bold border-b-3 transition-all ${
-                activeTab === tab.id
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-              }`}
+              className={`px-6 py-4 font-bold border-b-3 transition-all ${activeTab === tab.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
             >
               <span className="mr-2">{tab.icon}</span>
               {tab.label}
@@ -1002,19 +796,15 @@ const FindoraApp = () => {
       </main>
 
       <footer className="bg-gray-900 text-white py-12">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="text-center mb-8">
-            <p className="text-3xl font-bold mb-3">Findora</p>
-            <p className="text-gray-400 text-lg mb-6">AI-Powered Lost & Found Platform</p>
-            <p className="text-gray-500 mb-4">
-              Advanced Computer Vision • Natural Language Processing • Smart Matching
-            </p>
-          </div>
+        <div className="max-w-7xl mx-auto px-4 text-center">
+          <p className="text-3xl font-bold mb-3">Findora</p>
+          <p className="text-gray-400 text-lg mb-6">AI-Powered Lost & Found Platform</p>
+          <p className="text-gray-500 mb-4">Advanced Computer Vision • Natural Language Processing • Smart Matching</p>
           <div className="flex flex-wrap justify-center gap-8 text-sm text-gray-400 border-t border-gray-800 pt-8">
-            <span className="flex items-center gap-2">✨ AI-Powered</span>
-            <span className="flex items-center gap-2">🔒 Secure</span>
-            <span className="flex items-center gap-2">⚡ Fast</span>
-            <span className="flex items-center gap-2">🎯 Accurate</span>
+            <span>✨ AI-Powered</span>
+            <span>🔒 Secure</span>
+            <span>⚡ Fast</span>
+            <span>🎯 Accurate</span>
           </div>
         </div>
       </footer>

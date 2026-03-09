@@ -1,7 +1,9 @@
 # backend/database.py
 """
-SQLite Database for Findora (Local Development)
-Replaces AWS DynamoDB - Works 100% offline!
+SQLite Database for Findora
+UPDATED FOR RENDER DEPLOYMENT
+- Uses /data/findora.db on Render (persistent disk)
+- Falls back to local data/findora.db when running locally
 """
 
 import sqlite3
@@ -10,17 +12,25 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import os
 
-# Database file location
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'findora.db')
+# ======================================================
+# DB PATH — Auto-detects Render vs Local
+# ======================================================
+if os.path.exists("/data"):
+    # Render persistent disk
+    DB_PATH = "/data/findora.db"
+else:
+    # Local development
+    DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'findora.db')
 
 class Database:
     """SQLite database manager"""
 
     def __init__(self):
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.create_tables()
+        print(f"✅ Database connected: {DB_PATH}")
 
     # =====================================================
     # TABLE CREATION
@@ -94,9 +104,7 @@ class Database:
         try:
             cursor = self.conn.cursor()
             cursor.execute("""
-                INSERT INTO items VALUES (
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
-                )
+                INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
                 item['item_id'], item['user_id'], item['title'], item['description'],
                 item['category'], item['location'], item.get('latitude'),
@@ -149,7 +157,7 @@ class Database:
         return True
 
     # =====================================================
-    # AI FEATURE PIPELINE SUPPORT (AGENT FIX)
+    # AI FEATURE PIPELINE SUPPORT
     # =====================================================
     def get_items_without_features(self, limit: int = 10) -> List[Dict]:
         cursor = self.conn.cursor()
@@ -191,8 +199,7 @@ class Database:
     def match_exists(self, lost_item_id: str, found_item_id: str) -> bool:
         cursor = self.conn.cursor()
         cursor.execute("""
-            SELECT 1 FROM matches
-            WHERE lost_item_id=? AND found_item_id=?
+            SELECT 1 FROM matches WHERE lost_item_id=? AND found_item_id=?
         """, (lost_item_id, found_item_id))
         return cursor.fetchone() is not None
 
@@ -203,16 +210,11 @@ class Database:
         cursor.execute("""
             INSERT INTO matches VALUES (?,?,?,?,?,?,?,?,?,?)
         """, (
-            match["match_id"],
-            match["lost_item_id"],
-            match["found_item_id"],
-            match["confidence_score"],
-            match["image_similarity"],
-            match["text_similarity"],
-            match["location_score"],
+            match["match_id"], match["lost_item_id"], match["found_item_id"],
+            match["confidence_score"], match["image_similarity"],
+            match["text_similarity"], match["location_score"],
             match.get("status", "pending"),
-            match["created_at"],
-            match["updated_at"]
+            match["created_at"], match["updated_at"]
         ))
         self.conn.commit()
         return True
@@ -230,19 +232,19 @@ class Database:
     # USERS
     # =====================================================
     def insert_user(self, user: Dict) -> bool:
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            INSERT INTO users VALUES (?,?,?,?,?,?)
-        """, (
-            user["user_id"],
-            user["email"],
-            user["name"],
-            user.get("phone", ""),
-            user["created_at"],
-            user["updated_at"]
-        ))
-        self.conn.commit()
-        return True
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                INSERT INTO users VALUES (?,?,?,?,?,?)
+            """, (
+                user["user_id"], user["email"], user["name"],
+                user.get("phone", ""), user["created_at"], user["updated_at"]
+            ))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error inserting user: {e}")
+            return False
 
     def get_user(self, user_id: str) -> Optional[Dict]:
         cursor = self.conn.cursor()

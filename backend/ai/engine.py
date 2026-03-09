@@ -2,6 +2,7 @@
 FINDORA - Production AI Engine
 FINAL STABLE VERSION (AVIF-SAFE + SMART MATCHING)
 Agent-compatible | Windows-safe | Production-ready
+UPDATED FOR RENDER DEPLOYMENT
 """
 
 import os
@@ -12,24 +13,53 @@ from datetime import datetime
 
 
 # =========================================================
+# RENDER-SAFE MODEL PATH RESOLVER
+# =========================================================
+def get_models_dir():
+    """
+    Auto-detects whether running on Render (/data) or locally.
+    On Render: /data/storage/models/findora_production
+    Locally:   backend/storage/models/findora_production
+    """
+    if os.path.exists("/data"):
+        return "/data/storage/models/findora_production"
+    return os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..", "storage", "models", "findora_production"
+        )
+    )
+
+def get_images_dir():
+    """
+    Auto-detects image storage dir.
+    On Render: /data/storage/images
+    Locally:   backend/storage/images
+    """
+    if os.path.exists("/data"):
+        return "/data/storage/images"
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "storage", "images")
+    )
+
+
+# =========================================================
 # PRODUCTION AI ENGINE
 # =========================================================
 
 class ProductionAIEngine:
     def __init__(self, models_dir: str = None):
         if models_dir is None:
-            models_dir = os.path.abspath(
-                os.path.join(
-                    os.path.dirname(__file__),
-                    "..", "storage", "models", "findora_production"
-                )
-            )
+            models_dir = get_models_dir()
 
         self.models_dir = models_dir
+        self.images_dir = get_images_dir()
         self.vision_model = None
         self.text_model = None
 
         print("🚀 Initializing Production AI Engine...")
+        print(f"   Models dir: {self.models_dir}")
+        print(f"   Images dir: {self.images_dir}")
         self._load_models()
 
     # =====================================================
@@ -41,8 +71,10 @@ class ProductionAIEngine:
             if os.path.exists(vision_path):
                 from tensorflow.keras.models import load_model
                 self.vision_model = load_model(vision_path, compile=False)
-                print("✅ Vision encoder loaded")
+                print("✅ Vision encoder loaded from file")
             else:
+                print(f"⚠️  vision_encoder.h5 not found at: {vision_path}")
+                print("   → Using fallback MobileNetV3 model")
                 self._init_fallback_vision()
 
             from sentence_transformers import SentenceTransformer
@@ -56,6 +88,10 @@ class ProductionAIEngine:
             self.text_model = SentenceTransformer("all-MiniLM-L6-v2")
 
     def _init_fallback_vision(self):
+        """
+        Creates a MobileNetV3 fallback if vision_encoder.h5 is missing.
+        Also saves it to disk so next startup is faster.
+        """
         from tensorflow.keras.applications import MobileNetV3Small
         from tensorflow.keras.models import Model
         import tensorflow as tf
@@ -68,8 +104,17 @@ class ProductionAIEngine:
         self.vision_model = Model(base.input, x)
         print("✅ Fallback vision model loaded")
 
+        # Auto-save so next startup loads from file
+        try:
+            os.makedirs(self.models_dir, exist_ok=True)
+            save_path = os.path.join(self.models_dir, "vision_encoder.h5")
+            self.vision_model.save(save_path)
+            print(f"✅ Fallback model saved to: {save_path}")
+        except Exception as e:
+            print(f"⚠️ Could not save fallback model: {e}")
+
     # =====================================================
-    # IMAGE FEATURES (AVIF SAFE)
+    # IMAGE FEATURES (AVIF SAFE + RENDER PATH AWARE)
     # =====================================================
     def extract_image_features(self, image_path: str) -> Optional[np.ndarray]:
         try:
@@ -77,13 +122,24 @@ class ProductionAIEngine:
             from tensorflow.keras.preprocessing import image as keras_image
             from tensorflow.keras.applications.mobilenet_v3 import preprocess_input
 
-            backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            if not image_path:
+                return None
+
             image_path = image_path.replace("\\", "/").lstrip("/")
-            full_path = os.path.normpath(
-                os.path.join(backend_dir, image_path)
-                if image_path.startswith("storage/")
-                else image_path
-            )
+
+            # Build full path — supports both /data (Render) and local
+            if image_path.startswith("storage/"):
+                if os.path.exists("/data"):
+                    full_path = os.path.join("/data", image_path)
+                else:
+                    backend_dir = os.path.abspath(
+                        os.path.join(os.path.dirname(__file__), "..")
+                    )
+                    full_path = os.path.join(backend_dir, image_path)
+            else:
+                full_path = image_path
+
+            full_path = os.path.normpath(full_path)
 
             if not os.path.exists(full_path):
                 print(f"❌ Image not found: {full_path}")
@@ -146,23 +202,19 @@ class ProductionAIEngine:
         image_sim = 0.0
         text_sim = 0.0
 
-        # Image
         f1 = self.extract_image_features(item1.get("image_path", ""))
         f2 = self.extract_image_features(item2.get("image_path", ""))
         if f1 is not None and f2 is not None:
             image_sim = self.cosine(f1, f2)
 
-        # Text
         t1 = f"{item1.get('title','')} {item1.get('description','')}"
         t2 = f"{item2.get('title','')} {item2.get('description','')}"
         e1, e2 = self.extract_text_embedding(t1), self.extract_text_embedding(t2)
         if e1 is not None and e2 is not None:
             text_sim = self.cosine(e1, e2)
 
-        # Category-aware boost
         category_boost = 0.1 if item1.get("category") == item2.get("category") else -0.05
 
-        # Location + time
         loc = self.location_score(
             item1.get("latitude"), item1.get("longitude"),
             item2.get("latitude"), item2.get("longitude")
@@ -184,7 +236,7 @@ class ProductionAIEngine:
             category_boost
         )
 
-        confidence = max(0.0, min(confidence, 0.95))  # cap confidence
+        confidence = max(0.0, min(confidence, 0.95))
 
         return {
             "is_match": confidence >= threshold,
