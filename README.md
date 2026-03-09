@@ -38,11 +38,7 @@ connect lost items with found items.
 - A similarity scoring engine identifies potential matches  
 - Matches with confidence ≥80% are flagged as high-confidence results  
 
-> **Note:**  
-> The trained model file (`vision_encoder.h5`) is generated locally and is  
-> intentionally **not included** in this repository.
-
----
+ 
 
 ## 📦 Installation
 
