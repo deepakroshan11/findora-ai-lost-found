@@ -36,22 +36,12 @@ app = FastAPI(
 )
 
 # ======================================================
-# CORS — Reads allowed origins from ENV for Render
+# CORS — TEMP FIX FOR PRODUCTION (VERY IMPORTANT)
 # ======================================================
-raw_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000"
-)
-
-# 🔥 CLEAN + STRIP SPACES (IMPORTANT)
-ALLOWED_ORIGINS = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
-
-print("✅ Allowed Origins:", ALLOWED_ORIGINS)
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],   # 🔥 FIX: allows all origins
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -236,24 +226,45 @@ async def get_stats():
 async def trigger_ai_processing(item_id: str):
     print(f"🤖 AI processing started for item: {item_id}")
 
-    new_item = db.get_item(item_id)
-    all_items = db.get_all_items(limit=100)
+    item = db.get_item(item_id)
+    if not item:
+        return
 
-    for item in all_items:
-        if item["item_id"] == item_id:
+    all_items = db.get_all_items()
+
+    for other in all_items:
+        if other["item_id"] == item_id:
             continue
 
-        # Simple matching logic
-        if new_item["category"] == item["category"]:
-            confidence = 0.85  # dummy AI score
+        # Match condition (title match)
+        if item["title"].lower() == other["title"].lower():
+            print("🔥 MATCH FOUND!")
 
-            # LOST → FOUND
-            if new_item["item_type"] == "lost" and item["item_type"] == "found":
-                notify_match(new_item, item, confidence)
+            # ✅ UPDATE STATUS (IMPORTANT)
+            item["status"] = "matched"
+            other["status"] = "matched"
 
-            # FOUND → LOST
-            elif new_item["item_type"] == "found" and item["item_type"] == "lost":
-                notify_match(item, new_item, confidence)
+            db.update_item(item["item_id"], item)
+            db.update_item(other["item_id"], other)
+
+            # ✅ STORE MATCH (IMPORTANT for /matches API)
+            match_data = {
+                "match_id": str(uuid.uuid4()),
+                "item1_id": item["item_id"],
+                "item2_id": other["item_id"],
+                "confidence_score": 0.85,
+                "created_at": datetime.utcnow().isoformat()
+            }
+
+            db.insert_match(match_data)
+
+            # ✅ SEND EMAIL
+            if item["item_type"] == "lost":
+                notify_match(item, other, 0.85)
+            else:
+                notify_match(other, item, 0.85)
+
+            print("📦 Match saved + notification triggered")
 
 # ======================================================
 # RUN

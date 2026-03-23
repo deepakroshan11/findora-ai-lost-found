@@ -1,301 +1,281 @@
 """
-FINDORA - Notification Engine
-Gmail SMTP — images embedded as Base64 in email (works locally + cloud)
+FINDORA - FastAPI Backend
+AI-Powered Lost & Found Platform
+(UPDATED FOR RENDER DEPLOYMENT)
 """
 
-import os
-import re
-import smtplib
-import ssl
-import base64
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from typing import Optional, List
 from datetime import datetime
-from typing import Dict, Tuple, Optional, List
-from dotenv import load_dotenv
+import uuid
+import os
+import shutil
 
-load_dotenv()
+# Local imports
+from database import db
+from models import (
+    UserCreate,
+    UserResponse,
+    ItemResponse,
+    MatchResponse,
+    HealthResponse,
+    validate_category,
+    validate_item_type
+)
+from notifications import notify_match
 
-GMAIL_ADDRESS  = os.getenv("GMAIL_ADDRESS", "")
-GMAIL_APP_PASS = os.getenv("GMAIL_APP_PASSWORD", "")
-FROM_NAME      = os.getenv("FROM_NAME", "Findora")
-API_BASE       = os.getenv("API_BASE_URL", "http://localhost:8000")
-ENABLED        = bool(GMAIL_ADDRESS and GMAIL_APP_PASS)
+# ======================================================
+# APP INIT
+# ======================================================
+app = FastAPI(
+    title="Findora API",
+    description="AI-Powered Lost & Found Platform",
+    version="1.0.0"
+)
 
+# ======================================================
+# CORS — TEMP FIX FOR PRODUCTION (VERY IMPORTANT)
+# ======================================================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # 🔥 FIX: allows all origins
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def parse_contact(contact_info: str) -> Tuple[str, Optional[str]]:
-    parts = [p.strip() for p in contact_info.split("|")]
-    email = parts[0] if parts else ""
-    phone = parts[1] if len(parts) > 1 and parts[1] else None
-    return email, phone
+# ======================================================
+# STORAGE — Uses /data on Render persistent disk
+# ======================================================
+BASE_DIR = os.path.dirname(__file__)
 
+# On Render: use /data (persistent disk). Locally: use backend/storage
+if os.path.exists("/data"):
+    STORAGE_DIR = "/data/storage"
+else:
+    STORAGE_DIR = os.path.join(BASE_DIR, "storage")
 
-def is_valid_email(s: str) -> bool:
-    return bool(re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+", s.strip()))
+IMAGES_DIR = os.path.join(STORAGE_DIR, "images")
+os.makedirs(IMAGES_DIR, exist_ok=True)
 
+app.mount("/storage/images", StaticFiles(directory=IMAGES_DIR), name="images")
 
-def resolve_image_path(image_path: str) -> Optional[str]:
-    """Resolve image_path to absolute local file path"""
-    if not image_path:
-        return None
-    image_path = image_path.replace("\\", "/").lstrip("/")
+# ======================================================
+# HELPERS
+# ======================================================
+def save_image(file: UploadFile, item_id: str) -> str:
+    ext = file.filename.split(".")[-1]
+    filename = f"{item_id}.{ext}"
+    path = os.path.join(IMAGES_DIR, filename)
 
-    if os.path.exists("/data"):
-        full = os.path.join("/data", image_path)
-    else:
-        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__)))
-        full = os.path.join(backend_dir, image_path)
+    with open(path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
-    full = os.path.normpath(full)
-    return full if os.path.exists(full) else None
+    return f"/storage/images/{filename}"
 
+# ======================================================
+# HEALTH
+# ======================================================
+@app.get("/", response_model=HealthResponse)
+async def health_check():
+    return HealthResponse(
+        status="healthy",
+        service="Findora API",
+        version="1.0.0",
+        timestamp=datetime.utcnow().isoformat(),
+        database="Connected"
+    )
 
-def load_image_base64(image_path: str) -> Optional[Tuple[str, str, str]]:
-    """
-    Returns (cid, base64_data, mime_type) or None
-    cid = content ID for embedding in HTML as cid:xxx
-    """
-    full_path = resolve_image_path(image_path)
-    if not full_path:
-        return None
+# ======================================================
+# USERS
+# ======================================================
+@app.post("/api/users/register", response_model=UserResponse)
+async def register_user(user: UserCreate):
+    user_id = str(uuid.uuid4())
+    ts = datetime.utcnow().isoformat()
 
-    ext = full_path.lower().split(".")[-1]
-    if ext in ("jpg", "jpeg"):
-        mime = "image/jpeg"
-    elif ext == "png":
-        mime = "image/png"
-    elif ext == "webp":
-        mime = "image/webp"
-    else:
-        return None
+    data = {
+        "user_id": user_id,
+        "email": user.email,
+        "name": user.name,
+        "phone": user.phone or "",
+        "created_at": ts,
+        "updated_at": ts
+    }
 
+    if not db.insert_user(data):
+        raise HTTPException(status_code=500, detail="User registration failed")
+
+    return UserResponse(**data)
+
+# ======================================================
+# ITEMS
+# ======================================================
+@app.post("/api/items/report", response_model=ItemResponse)
+async def report_item(
+    background_tasks: BackgroundTasks,
+    title: str = Form(...),
+    description: str = Form(...),
+    category: str = Form(...),
+    location: str = Form(...),
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
+    item_type: str = Form(...),
+    reward_amount: Optional[float] = Form(0.0),
+    contact_info: str = Form(...),
+    user_id: str = Form(...),
+    image: UploadFile = File(...)
+):
+    if not validate_item_type(item_type):
+        raise HTTPException(status_code=400, detail="Invalid item type")
+
+    if not validate_category(category):
+        raise HTTPException(status_code=400, detail="Invalid category")
+
+    item_id = str(uuid.uuid4())
+    ts = datetime.utcnow().isoformat()
+
+    image_path = save_image(image, item_id)
+
+    item = {
+        "item_id": item_id,
+        "user_id": user_id,
+        "title": title,
+        "description": description,
+        "category": category,
+        "location": location,
+        "latitude": latitude,
+        "longitude": longitude,
+        "item_type": item_type,
+        "reward_amount": reward_amount,
+        "contact_info": contact_info,
+        "image_path": image_path,
+        "status": "active",
+        "created_at": ts,
+        "updated_at": ts
+    }
+
+    if not db.insert_item(item):
+        raise HTTPException(status_code=500, detail="Item submission failed")
+
+    background_tasks.add_task(trigger_ai_processing, item_id)
+    return ItemResponse(**item)
+
+@app.get("/api/items", response_model=List[ItemResponse])
+async def list_items(
+    item_type: Optional[str] = None,
+    category: Optional[str] = None,
+    status: str = "active",
+    limit: int = 50
+):
+    items = db.get_all_items(item_type=item_type, status=status, limit=limit)
+
+    if category:
+        items = [i for i in items if i["category"] == category]
+
+    for i in items:
+        i.pop("image_features", None)
+        i.pop("text_embedding", None)
+
+    return [ItemResponse(**i) for i in items]
+
+@app.get("/api/items/{item_id}", response_model=ItemResponse)
+async def get_item(item_id: str):
+    item = db.get_item(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    item.pop("image_features", None)
+    item.pop("text_embedding", None)
+    return ItemResponse(**item)
+
+# ======================================================
+# MATCHES
+# ======================================================
+@app.get("/api/matches/{item_id}", response_model=List[MatchResponse])
+async def get_matches(item_id: str):
+    matches = db.get_matches_for_item(item_id)
+    matches.sort(key=lambda x: x["confidence_score"], reverse=True)
+    return [MatchResponse(**m) for m in matches]
+
+# ======================================================
+# STATS
+# ======================================================
+@app.get("/api/stats")
+async def get_stats():
     try:
-        with open(full_path, "rb") as f:
-            data = base64.b64encode(f.read()).decode("utf-8")
-        cid = os.path.basename(full_path).replace(".", "_")
-        return cid, data, mime
+        items = db.get_all_items(status="active", limit=1000)
+        lost = sum(1 for i in items if i.get("item_type") == "lost")
+        found = sum(1 for i in items if i.get("item_type") == "found")
+        matched = sum(1 for i in items if i.get("status") == "matched")
+        return {
+            "total_items": len(items),
+            "lost_items": lost,
+            "found_items": found,
+            "matched_items": matched
+        }
     except Exception as e:
-        print(f"   ⚠️  Could not load image: {full_path} — {e}")
-        return None
+        print("❌ Stats error:", e)
+        raise HTTPException(status_code=500, detail="Stats calculation failed")
 
+# ======================================================
+# BACKGROUND
+# ======================================================
+async def trigger_ai_processing(item_id: str):
+    print(f"🤖 AI processing started for item: {item_id}")
 
-def build_contact_box(other_label: str, contact_info: str) -> str:
-    email, phone = parse_contact(contact_info)
-    phone_row = ""
-    if phone:
-        phone_row = f"""
-    <tr><td style="padding-top:8px;">
-      <p style="margin:0 0 2px;font-size:9px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;">Mobile</p>
-      <p style="margin:0;font-size:14px;font-weight:600;color:#fff;">{phone}</p>
-    </td></tr>"""
-    return f"""
-  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
-  <tr><td style="background:#1e3a5f;border-radius:9px;padding:13px 15px;">
-    <p style="margin:0 0 8px;font-size:9px;font-weight:700;color:rgba(255,255,255,.55);letter-spacing:.1em;text-transform:uppercase;">Contact the {other_label} Person</p>
-    <table width="100%" cellpadding="0" cellspacing="0">
-      <tr><td>
-        <p style="margin:0 0 2px;font-size:9px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;">Email</p>
-        <p style="margin:0;font-size:14px;font-weight:600;color:#7ab8ff;">{email}</p>
-      </td></tr>{phone_row}
-    </table>
-  </td></tr></table>"""
+    item = db.get_item(item_id)
+    if not item:
+        return
 
+    all_items = db.get_all_items()
 
-def item_card_html(label: str, item: Dict, border_color: str, bg: str, img_cid: Optional[str]) -> str:
-    def trunc(t, n=120):
-        return (t[:n] + "...") if len(t) > n else t
+    for other in all_items:
+        if other["item_id"] == item_id:
+            continue
 
-    img_html = ""
-    if img_cid:
-        img_html = f"""
-      <tr><td style="padding-top:10px;">
-        <img src="cid:{img_cid}" alt="{item.get('title','')}"
-          style="width:100%;max-height:220px;object-fit:cover;border-radius:7px;display:block;" />
-      </td></tr>"""
+        # Match condition (title match)
+        if item["title"].lower() == other["title"].lower():
+            print("🔥 MATCH FOUND!")
 
-    return f"""
-  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
-  <tr><td style="background:{bg};border-radius:9px;overflow:hidden;border-left:3px solid {border_color};">
-    <table width="100%" cellpadding="0" cellspacing="0" style="padding:13px 15px;">
-      <tr><td>
-        <p style="margin:0 0 4px;font-size:9px;font-weight:700;color:#7a8eaa;letter-spacing:.1em;text-transform:uppercase;">{label}</p>
-        <p style="margin:0 0 3px;font-size:14px;font-weight:600;color:#0f172a;">{item.get('title','—')}</p>
-        <p style="margin:0 0 4px;font-size:12px;color:#5c718a;line-height:1.5;">{trunc(item.get('description',''))}</p>
-        <p style="margin:0;font-size:11px;color:#7a8eaa;">&#128205; {item.get('location','—')}</p>
-      </td></tr>
-      {img_html}
-    </table>
-  </td></tr></table>"""
+            # ✅ UPDATE STATUS (IMPORTANT)
+            item["status"] = "matched"
+            other["status"] = "matched"
 
+            db.update_item(item["item_id"], item)
+            db.update_item(other["item_id"], other)
 
-def build_html(recipient_role, recipient_item, matched_item, confidence, r_cid, m_cid):
-    role_label  = "Lost"  if recipient_role == "lost"  else "Found"
-    other_label = "Found" if recipient_role == "lost"  else "Lost"
-    action_text = "may have been found" if recipient_role == "lost" else "may belong to someone"
-    pct         = round(confidence * 100, 1)
-    bar_color   = "#1a4d33" if confidence >= 0.9 else "#1e3a5f"
-    bar_width   = round(pct)
-    now         = datetime.now().strftime("%d %b %Y, %I:%M %p")
+            # ✅ STORE MATCH (IMPORTANT for /matches API)
+            match_data = {
+                "match_id": str(uuid.uuid4()),
+                "item1_id": item["item_id"],
+                "item2_id": other["item_id"],
+                "confidence_score": 0.85,
+                "created_at": datetime.utcnow().isoformat()
+            }
 
-    your_card    = item_card_html(f"Your {role_label} Item",     recipient_item, "#c5d0e0", "#f0f2f5", r_cid)
-    matched_card = item_card_html(f"Matched {other_label} Item", matched_item,  "#1e3a5f", "#eef1f7", m_cid)
-    contact_box  = build_contact_box(other_label, matched_item.get("contact_info", "—"))
+            db.insert_match(match_data)
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Findora Match Alert</title></head>
-<body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f2f5;padding:32px 0;">
-<tr><td align="center">
-<table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:14px;overflow:hidden;border:1px solid #dde3ed;max-width:560px;">
+            # ✅ SEND EMAIL
+            if item["item_type"] == "lost":
+                notify_match(item, other, 0.85)
+            else:
+                notify_match(other, item, 0.85)
 
-<tr><td style="background:#1e3a5f;padding:22px 26px;">
-  <table cellpadding="0" cellspacing="0"><tr>
-    <td style="width:34px;height:34px;background:rgba(255,255,255,0.12);border-radius:8px;text-align:center;vertical-align:middle;font-size:16px;">&#128269;</td>
-    <td style="padding-left:10px;">
-      <p style="margin:0;font-size:18px;font-style:italic;color:#fff;font-family:Georgia,serif;">Findora</p>
-      <p style="margin:0;font-size:9px;color:rgba(255,255,255,0.55);letter-spacing:.1em;text-transform:uppercase;">AI Lost &amp; Found</p>
-    </td>
-  </tr></table>
-</td></tr>
+            print("📦 Match saved + notification triggered")
 
-<tr><td style="background:#e8f2ec;padding:11px 26px;border-bottom:1px solid #b8ddc8;">
-  <p style="margin:0;font-size:12.5px;font-weight:600;color:#1a4d33;">&#10003;&nbsp; AI Match Detected — {pct}% Confidence</p>
-</td></tr>
-
-<tr><td style="padding:24px 26px;">
-  <p style="margin:0 0 5px;font-size:10px;font-weight:700;color:#7a8eaa;letter-spacing:.1em;text-transform:uppercase;">Match Alert</p>
-  <p style="margin:0 0 14px;font-size:22px;font-style:italic;color:#0f172a;font-family:Georgia,serif;">Your {role_label} item {action_text}</p>
-  <p style="margin:0 0 20px;font-size:13px;color:#5c718a;line-height:1.65;">Our AI found a potential match. Compare the images below and contact the other party to confirm.</p>
-
-  {your_card}
-  {matched_card}
-
-  <p style="margin:0 0 6px;font-size:11.5px;font-weight:600;color:#2d4460;">Match Confidence: {pct}%</p>
-  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
-  <tr><td style="background:#eef1f7;border-radius:4px;height:6px;">
-    <table width="{bar_width}%" cellpadding="0" cellspacing="0">
-    <tr><td style="background:{bar_color};border-radius:4px;height:6px;"></td></tr>
-    </table>
-  </td></tr></table>
-
-  {contact_box}
-
-  <p style="margin:0;font-size:12px;color:#7a8eaa;line-height:1.65;">Reach out directly to confirm. If this is not your item, please ignore this email.</p>
-</td></tr>
-
-<tr><td style="background:#1e3a5f;padding:16px 26px;text-align:center;">
-  <p style="margin:0 0 3px;font-size:14px;font-style:italic;color:#fff;font-family:Georgia,serif;">Findora</p>
-  <p style="margin:0 0 4px;font-size:10px;color:#7a9bbf;">Intelligent Lost &amp; Found — Powered by AI</p>
-  <p style="margin:0;font-size:10px;color:#4a6a8a;">Sent on {now}</p>
-</td></tr>
-
-</table>
-</td></tr></table>
-</body></html>"""
-
-
-def build_text(recipient_role, recipient_item, matched_item, confidence):
-    pct   = round(confidence * 100, 1)
-    rl    = "Lost"  if recipient_role == "lost" else "Found"
-    ol    = "Found" if recipient_role == "lost" else "Lost"
-    email, phone = parse_contact(matched_item.get("contact_info", ""))
-    phone_line = f"Mobile : {phone}" if phone else ""
-    return f"""FINDORA — AI Match Alert ({pct}%)
-
-Your {rl} item '{recipient_item.get('title')}' may have been matched.
-
-YOUR {rl.upper()} ITEM: {recipient_item.get('title')}
-{recipient_item.get('description','')}
-Location : {recipient_item.get('location','')}
-
-MATCHED {ol.upper()} ITEM: {matched_item.get('title')}
-{matched_item.get('description','')}
-Location : {matched_item.get('location','')}
-
-CONTACT THE {ol.upper()} PERSON:
-Email  : {email}
-{phone_line}
-
-— Findora AI Lost & Found
-"""
-
-
-def send_email(to_address, recipient_role, recipient_item, matched_item, confidence):
-    if not ENABLED:
-        print("   ⚠️  Gmail not configured")
-        return False
-
-    rl      = "Lost" if recipient_role == "lost" else "Found"
-    subject = f"Findora — Your {rl} item may have been matched ({round(confidence*100)}%)"
-
-    # Load images
-    r_img = load_image_base64(recipient_item.get("image_path", ""))
-    m_img = load_image_base64(matched_item.get("image_path", ""))
-    r_cid = r_img[0] if r_img else None
-    m_cid = m_img[0] if m_img else None
-
-    try:
-        # Use 'related' so inline images work
-        msg = MIMEMultipart("mixed")
-        msg["Subject"] = subject
-        msg["From"]    = f"{FROM_NAME} <{GMAIL_ADDRESS}>"
-        msg["To"]      = to_address
-
-        # Text + HTML as alternatives
-        alt = MIMEMultipart("alternative")
-        alt.attach(MIMEText(build_text(recipient_role, recipient_item, matched_item, confidence), "plain"))
-        alt.attach(MIMEText(build_html(recipient_role, recipient_item, matched_item, confidence, r_cid, m_cid), "html"))
-        msg.attach(alt)
-
-        # Attach images with Content-ID
-        for img_data in [r_img, m_img]:
-            if img_data:
-                cid, b64data, mime_type = img_data
-                img_bytes = base64.b64decode(b64data)
-                mime_img  = MIMEImage(img_bytes, _subtype=mime_type.split("/")[1])
-                mime_img.add_header("Content-ID", f"<{cid}>")
-                mime_img.add_header("Content-Disposition", "inline")
-                msg.attach(mime_img)
-
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx) as smtp:
-            smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASS)
-            smtp.sendmail(GMAIL_ADDRESS, to_address, msg.as_string())
-
-        print(f"   📧 Email sent → {to_address} (images: {'✓' if r_cid or m_cid else '✗'})")
-        return True
-
-    except Exception as e:
-        print(f"   ❌ Email failed → {to_address}: {e}")
-        return False
-
-
-def notify_match(lost_item: Dict, found_item: Dict, confidence: float):
-    print(f"\n   📣 Notifying users ({round(confidence*100)}% match)...")
-
-    lc = lost_item.get("contact_info", "").strip()
-    fc = found_item.get("contact_info", "").strip()
-
-    if lc:
-        lost_email, _ = parse_contact(lc)
-        if is_valid_email(lost_email):
-            print(f"   → Lost user  : {lost_email}")
-            send_email(lost_email, "lost", lost_item, found_item, confidence)
-        else:
-            print(f"   ⚠️  Invalid lost email: {lost_email}")
-    else:
-        print("   ⚠️  Lost item has no contact info")
-
-    if fc:
-        found_email, _ = parse_contact(fc)
-        if is_valid_email(found_email):
-            print(f"   → Found user : {found_email}")
-            send_email(found_email, "found", found_item, lost_item, confidence)
-        else:
-            print(f"   ⚠️  Invalid found email: {found_email}")
-    else:
-        print("   ⚠️  Found item has no contact info")
+# ======================================================
+# RUN
+# ======================================================
+if __name__ == "__main__":
+    import uvicorn
+    PORT = int(os.getenv("PORT", 8000))
+    print("=" * 60)
+    print("🚀 FINDORA - AI-POWERED LOST & FOUND PLATFORM")
+    print("=" * 60)
+    print(f"📍 Backend API: http://localhost:{PORT}")
+    print(f"📚 API Docs:    http://localhost:{PORT}/docs")
+    print("=" * 60)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, reload=False)
