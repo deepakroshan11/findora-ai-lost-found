@@ -16,11 +16,10 @@ import os
 # DB PATH — Auto-detects Render vs Local
 # ======================================================
 if os.path.exists("/data"):
-    # Render persistent disk
     DB_PATH = "/data/findora.db"
 else:
-    # Local development
     DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'findora.db')
+
 
 class Database:
     """SQLite database manager"""
@@ -38,6 +37,7 @@ class Database:
     def create_tables(self):
         cursor = self.conn.cursor()
 
+        # 17 columns total
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS items (
                 item_id TEXT PRIMARY KEY,
@@ -103,18 +103,32 @@ class Database:
     def insert_item(self, item: Dict) -> bool:
         try:
             cursor = self.conn.cursor()
+            # Exactly 17 columns — 17 placeholders
             cursor.execute("""
-                INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO items (
+                    item_id, user_id, title, description, category,
+                    location, latitude, longitude, item_type, reward_amount,
+                    contact_info, image_path, status, created_at, updated_at,
+                    image_features, text_embedding
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
-                item['item_id'], item['user_id'], item['title'], item['description'],
-                item['category'], item['location'], item.get('latitude'),
-                item.get('longitude'), item['item_type'],
+                item['item_id'],
+                item['user_id'],
+                item['title'],
+                item['description'],
+                item['category'],
+                item['location'],
+                item.get('latitude'),
+                item.get('longitude'),
+                item['item_type'],
                 item.get('reward_amount', 0),
-                item['contact_info'], item.get('image_path'),
+                item['contact_info'],
+                item.get('image_path'),
                 item.get('status', 'active'),
-                item['created_at'], item['updated_at'],
+                item['created_at'],
+                item['updated_at'],
                 json.dumps(item.get('image_features')) if item.get('image_features') else None,
-                json.dumps(item.get('text_embedding')) if item.get('text_embedding') else None
+                json.dumps(item.get('text_embedding')) if item.get('text_embedding') else None,
             ))
             self.conn.commit()
             return True

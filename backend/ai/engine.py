@@ -1,8 +1,10 @@
 """
 FINDORA - Production AI Engine
-FINAL STABLE VERSION (AVIF-SAFE + SMART MATCHING)
-Agent-compatible | Windows-safe | Production-ready
-UPDATED FOR RENDER DEPLOYMENT
+FIXED VERSION
+- No Lambda layer (saves cleanly)
+- Saves as .keras format
+- Compatible with huggingface_hub >= 0.16
+- AVIF-safe | Windows-safe | Render-ready
 """
 
 import os
@@ -13,29 +15,16 @@ from datetime import datetime
 
 
 # =========================================================
-# RENDER-SAFE MODEL PATH RESOLVER
+# PATH RESOLVERS
 # =========================================================
 def get_models_dir():
-    """
-    Auto-detects whether running on Render (/data) or locally.
-    On Render: /data/storage/models/findora_production
-    Locally:   backend/storage/models/findora_production
-    """
     if os.path.exists("/data"):
         return "/data/storage/models/findora_production"
     return os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..", "storage", "models", "findora_production"
-        )
+        os.path.join(os.path.dirname(__file__), "..", "storage", "models", "findora_production")
     )
 
 def get_images_dir():
-    """
-    Auto-detects image storage dir.
-    On Render: /data/storage/images
-    Locally:   backend/storage/images
-    """
     if os.path.exists("/data"):
         return "/data/storage/images"
     return os.path.abspath(
@@ -46,7 +35,6 @@ def get_images_dir():
 # =========================================================
 # PRODUCTION AI ENGINE
 # =========================================================
-
 class ProductionAIEngine:
     def __init__(self, models_dir: str = None):
         if models_dir is None:
@@ -66,55 +54,71 @@ class ProductionAIEngine:
     # MODEL LOADING
     # =====================================================
     def _load_models(self):
-        try:
-            vision_path = os.path.join(self.models_dir, "vision_encoder.h5")
-            if os.path.exists(vision_path):
-                from tensorflow.keras.models import load_model
-                self.vision_model = load_model(vision_path, compile=False)
-                print("✅ Vision encoder loaded from file")
-            else:
-                print(f"⚠️  vision_encoder.h5 not found at: {vision_path}")
-                print("   → Using fallback MobileNetV3 model")
-                self._init_fallback_vision()
+        # ── Vision model ──────────────────────────────────
+        keras_path = os.path.join(self.models_dir, "vision_encoder.keras")
+        h5_path    = os.path.join(self.models_dir, "vision_encoder.h5")
 
+        if os.path.exists(keras_path):
+            try:
+                from tensorflow.keras.models import load_model
+                self.vision_model = load_model(keras_path, compile=False)
+                print("✅ Vision encoder loaded (.keras)")
+            except Exception as e:
+                print(f"⚠️  Failed to load .keras model: {e} → rebuilding fallback")
+                self._init_fallback_vision()
+        elif os.path.exists(h5_path):
+            try:
+                from tensorflow.keras.models import load_model
+                self.vision_model = load_model(h5_path, compile=False)
+                print("✅ Vision encoder loaded (.h5)")
+            except Exception as e:
+                print(f"⚠️  Failed to load .h5 model: {e} → rebuilding fallback")
+                self._init_fallback_vision()
+        else:
+            print("⚠️  No saved vision model found → building fallback MobileNetV3")
+            self._init_fallback_vision()
+
+        # ── Text model ────────────────────────────────────
+        try:
             from sentence_transformers import SentenceTransformer
             self.text_model = SentenceTransformer("all-MiniLM-L6-v2")
             print("✅ Text encoder loaded")
-
         except Exception as e:
-            print(f"⚠️ Model load error: {e}")
-            self._init_fallback_vision()
-            from sentence_transformers import SentenceTransformer
-            self.text_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-    def _init_fallback_vision(self):
-        """
-        Creates a MobileNetV3 fallback if vision_encoder.h5 is missing.
-        Also saves it to disk so next startup is faster.
-        """
-        from tensorflow.keras.applications import MobileNetV3Small
-        from tensorflow.keras.models import Model
-        import tensorflow as tf
-
-        base = MobileNetV3Small(include_top=False, weights="imagenet", pooling="avg")
-        x = tf.keras.layers.Lambda(
-            lambda t: tf.math.l2_normalize(t, axis=1)
-        )(base.output)
-
-        self.vision_model = Model(base.input, x)
-        print("✅ Fallback vision model loaded")
-
-        # Auto-save so next startup loads from file
-        try:
-            os.makedirs(self.models_dir, exist_ok=True)
-            save_path = os.path.join(self.models_dir, "vision_encoder.h5")
-            self.vision_model.save(save_path)
-            print(f"✅ Fallback model saved to: {save_path}")
-        except Exception as e:
-            print(f"⚠️ Could not save fallback model: {e}")
+            print(f"❌ Text encoder failed: {e}")
+            raise
 
     # =====================================================
-    # IMAGE FEATURES (AVIF SAFE + RENDER PATH AWARE)
+    # FALLBACK VISION MODEL
+    # No Lambda layer — uses a pure Keras subclass instead
+    # so the model is fully serialisable
+    # =====================================================
+    def _init_fallback_vision(self):
+        import tensorflow as tf
+        from tensorflow.keras.applications import MobileNetV3Small
+        from tensorflow.keras.models import Model
+        from tensorflow.keras import layers
+
+        # L2-normalisation as a proper Keras layer (no Lambda)
+        class L2Norm(layers.Layer):
+            def call(self, x):
+                return tf.math.l2_normalize(x, axis=1)
+
+        base = MobileNetV3Small(include_top=False, weights="imagenet", pooling="avg")
+        out  = L2Norm()(base.output)
+        self.vision_model = Model(base.input, out, name="vision_encoder")
+        print("✅ Fallback vision model built")
+
+        # Save as .keras (new native format — no pickling issues)
+        try:
+            os.makedirs(self.models_dir, exist_ok=True)
+            save_path = os.path.join(self.models_dir, "vision_encoder.keras")
+            self.vision_model.save(save_path)
+            print(f"✅ Vision model saved → {save_path}")
+        except Exception as e:
+            print(f"⚠️  Could not save vision model: {e} (will rebuild next run)")
+
+    # =====================================================
+    # IMAGE FEATURES
     # =====================================================
     def extract_image_features(self, image_path: str) -> Optional[np.ndarray]:
         try:
@@ -127,14 +131,11 @@ class ProductionAIEngine:
 
             image_path = image_path.replace("\\", "/").lstrip("/")
 
-            # Build full path — supports both /data (Render) and local
             if image_path.startswith("storage/"):
                 if os.path.exists("/data"):
                     full_path = os.path.join("/data", image_path)
                 else:
-                    backend_dir = os.path.abspath(
-                        os.path.join(os.path.dirname(__file__), "..")
-                    )
+                    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
                     full_path = os.path.join(backend_dir, image_path)
             else:
                 full_path = image_path
@@ -145,9 +146,8 @@ class ProductionAIEngine:
                 print(f"❌ Image not found: {full_path}")
                 return None
 
-            # 🚫 AVIF BLOCK
             if full_path.lower().endswith(".avif"):
-                print(f"⚠️ AVIF detected → skipping vision: {full_path}")
+                print(f"⚠️  AVIF skipped: {full_path}")
                 return None
 
             img = Image.open(full_path).convert("RGB").resize((224, 224))
@@ -168,14 +168,15 @@ class ProductionAIEngine:
     def extract_text_embedding(self, text: str) -> Optional[np.ndarray]:
         try:
             text = " ".join(text.lower().split())
-            emb = self.text_model.encode(text, convert_to_numpy=True)
-            return emb / np.linalg.norm(emb)
+            emb  = self.text_model.encode(text, convert_to_numpy=True)
+            norm = np.linalg.norm(emb)
+            return emb / norm if norm > 0 else emb
         except Exception as e:
             print(f"❌ Text embedding error: {e}")
             return None
 
     # =====================================================
-    # SCORING HELPERS
+    # SCORING
     # =====================================================
     def cosine(self, a, b):
         from sklearn.metrics.pairwise import cosine_similarity
@@ -184,15 +185,12 @@ class ProductionAIEngine:
     def location_score(self, lat1, lon1, lat2, lon2, max_km=10):
         if not all([lat1, lon1, lat2, lon2]):
             return 0.5
-
         from math import radians, sin, cos, sqrt, atan2
         R = 6371
         lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
         dlat, dlon = lat2 - lat1, lon2 - lon1
-
-        a = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
-        dist = R * (2 * atan2(sqrt(a), sqrt(1-a)))
-
+        a    = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
+        dist = R * (2 * atan2(sqrt(a), sqrt(1 - a)))
         return 0.0 if dist > max_km else float(np.exp(-dist / (max_km / 3)))
 
     # =====================================================
@@ -200,7 +198,7 @@ class ProductionAIEngine:
     # =====================================================
     def match_items(self, item1: Dict, item2: Dict, threshold=0.6) -> Dict:
         image_sim = 0.0
-        text_sim = 0.0
+        text_sim  = 0.0
 
         f1 = self.extract_image_features(item1.get("image_path", ""))
         f2 = self.extract_image_features(item2.get("image_path", ""))
@@ -209,7 +207,8 @@ class ProductionAIEngine:
 
         t1 = f"{item1.get('title','')} {item1.get('description','')}"
         t2 = f"{item2.get('title','')} {item2.get('description','')}"
-        e1, e2 = self.extract_text_embedding(t1), self.extract_text_embedding(t2)
+        e1 = self.extract_text_embedding(t1)
+        e2 = self.extract_text_embedding(t2)
         if e1 is not None and e2 is not None:
             text_sim = self.cosine(e1, e2)
 
@@ -220,35 +219,34 @@ class ProductionAIEngine:
             item2.get("latitude"), item2.get("longitude")
         )
 
-        time = 0.7
+        time_score = 0.7
         if item1.get("created_at") and item2.get("created_at"):
             days = abs(
                 (datetime.fromisoformat(item1["created_at"]) -
                  datetime.fromisoformat(item2["created_at"])).days
             )
-            time = float(np.exp(-days / 30))
+            time_score = float(np.exp(-days / 30))
 
         confidence = (
-            image_sim * 0.4 +
-            text_sim * 0.35 +
-            loc * 0.15 +
-            time * 0.1 +
+            image_sim   * 0.40 +
+            text_sim    * 0.35 +
+            loc         * 0.15 +
+            time_score  * 0.10 +
             category_boost
         )
-
         confidence = max(0.0, min(confidence, 0.95))
 
         return {
-            "is_match": confidence >= threshold,
-            "confidence_score": round(confidence, 3),
-            "image_similarity": round(image_sim, 3),
-            "text_similarity": round(text_sim, 3),
-            "location_score": round(loc, 3),
-            "temporal_score": round(time, 3)
+            "is_match":         confidence >= threshold,
+            "confidence_score": round(confidence,  3),
+            "image_similarity": round(image_sim,   3),
+            "text_similarity":  round(text_sim,    3),
+            "location_score":   round(loc,         3),
+            "temporal_score":   round(time_score,  3),
         }
 
     # =====================================================
-    # BATCH MATCH (AGENT SAFE)
+    # BATCH MATCH
     # =====================================================
     def batch_match(
         self,
@@ -256,7 +254,7 @@ class ProductionAIEngine:
         candidates: Optional[List[Dict]] = None,
         candidate_items: Optional[List[Dict]] = None,
         threshold=0.6,
-        top_k=5
+        top_k=5,
     ):
         if candidates is None:
             candidates = candidate_items or []

@@ -4,12 +4,16 @@ services:
     runtime: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    startCommand: python main.py
     envVars:
       - key: ALLOWED_ORIGINS
-        value: https://findora.vercel.app
-      - key: PORT
-        value: 10000
+        value: http://localhost:3000,https://findora-ai-lost-found.vercel.app
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: FROM_NAME
+        value: Findora
     disk:
       name: findora-data
       mountPath: /data

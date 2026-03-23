@@ -1,675 +1,282 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp, Filter, Clock, Sparkles } from 'lucide-react';
+import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp, Clock, Sparkles, Shield, Zap } from 'lucide-react';
 
-// ✅ DEPLOYMENT FIX: Reads from .env in local, from Vercel env var in production
 const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
-const FindoraApp = () => {
-  const [activeTab, setActiveTab] = useState('home');
-  const [items, setItems] = useState([]);
-  const [matches, setMatches] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [userId, setUserId] = useState(localStorage.getItem('findora_user_id') || null);
-  const [stats, setStats] = useState(null);
-  const [filterType, setFilterType] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    category: 'wallet',
-    location: '',
-    latitude: null,
-    longitude: null,
-    itemType: 'lost',
-    rewardAmount: 0,
-    contactInfo: '',
-    image: null
-  });
-  
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [notification, setNotification] = useState(null);
-  const [formErrors, setFormErrors] = useState({});
+// ─── Shared Components (outside FindoraApp — never re-created on state change) ─
+const FieldError = ({ msg }) => msg ? (
+  <p style={s.fieldError}><AlertCircle size={13} />{msg}</p>
+) : null;
 
-  // Auto-register user on mount
-  useEffect(() => {
-    if (!userId) {
-      autoRegisterUser();
-    }
-  }, [userId]);
+const Spinner = ({ size = 20, color = '#ffffff' }) => (
+  <div style={{ width: size, height: size, border: `2px solid rgba(255,255,255,0.25)`, borderTopColor: color, borderRadius: '50%', animation: 'spin 0.75s linear infinite' }} />
+);
 
-  // Fetch data based on active tab
-  useEffect(() => {
-    if (activeTab === 'browse') {
-      fetchItems();
-    }
-    if (activeTab === 'home') {
-      fetchStats();
-    }
-    if (activeTab === 'matches') {
-      fetchMatches();
-    }
-  }, [activeTab]);
+// ─── Home Tab ─────────────────────────────────────────────────────────────────
+const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) => (
+  <div style={s.page}>
+    <div style={s.hero}>
+      <p style={s.heroEyebrow}>AI-Powered Platform</p>
+      <h1 style={s.heroTitle}>Findora</h1>
+      <p style={s.heroSub}>Reconnecting people with their belongings — intelligently.</p>
+    </div>
 
-  const autoRegisterUser = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/api/users/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: `user${Date.now()}@findora.app`,
-          name: 'User',
-          phone: ''
-        })
-      });
-      
-      if (!response.ok) throw new Error('Registration failed');
-      
-      const data = await response.json();
-      setUserId(data.user_id);
-      localStorage.setItem('findora_user_id', data.user_id);
-    } catch (error) {
-      console.error('Registration failed:', error);
-      showNotification('Failed to register user', 'error');
-    }
-  };
-
-  const showNotification = useCallback((message, type = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 4000);
-  }, []);
-
-  const fetchStats = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/api/stats`);
-      if (!response.ok) throw new Error('Failed to fetch stats');
-      const data = await response.json();
-      setStats(data);
-    } catch (error) {
-      console.error('Stats fetch error:', error);
-    }
-  };
-
-  const fetchItems = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_BASE}/api/items`);
-      if (!response.ok) throw new Error('Failed to fetch items');
-      const data = await response.json();
-      setItems(data);
-    } catch (error) {
-      showNotification('Failed to load items', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchMatches = async () => {
-    try {
-      setLoading(true);
-      const allMatches = [];
-
-      let itemsToCheck = items;
-      if (items.length === 0) {
-        const response = await fetch(`${API_BASE}/api/items`);
-        if (response.ok) {
-          itemsToCheck = await response.json();
-          setItems(itemsToCheck);
-        }
-      }
-
-      for (const item of itemsToCheck) {
-        const res = await fetch(`${API_BASE}/api/matches/${item.item_id}`);
-        if (!res.ok) continue;
-        
-        const data = await res.json();
-        const highConfidence = data.filter(m => m.confidence_score >= 0.8);
-
-        const matchesWithDetails = highConfidence.map(match => ({
-          ...match,
-          sourceItem: item
-        }));
-
-        allMatches.push(...matchesWithDetails);
-      }
-
-      setMatches(allMatches);
-    } catch (err) {
-      console.error('Match fetch error:', err);
-      showNotification('Failed to load matches', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const validateForm = () => {
-    const errors = {};
-    
-    if (!formData.title.trim()) {
-      errors.title = 'Title is required';
-    }
-    
-    if (!formData.description.trim()) {
-      errors.description = 'Description is required';
-    } else if (formData.description.length < 10) {
-      errors.description = 'Description must be at least 10 characters';
-    }
-    
-    if (!formData.location.trim()) {
-      errors.location = 'Location is required';
-    }
-    
-    if (!formData.contactInfo.trim()) {
-      errors.contactInfo = 'Contact information is required';
-    } else if (!formData.contactInfo.includes('@') && !/^\+?[\d\s-()]+$/.test(formData.contactInfo)) {
-      errors.contactInfo = 'Please provide a valid email or phone number';
-    }
-    
-    if (!formData.image) {
-      errors.image = 'Image is required';
-    }
-    
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 10 * 1024 * 1024) {
-        showNotification('Image too large! Max 10MB', 'error');
-        return;
-      }
-      
-      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-      if (!validTypes.includes(file.type)) {
-        showNotification('Invalid file type. Please upload JPG, PNG, or WEBP', 'error');
-        return;
-      }
-      
-      setFormData({ ...formData, image: file });
-      setFormErrors({ ...formErrors, image: null });
-      
-      const reader = new FileReader();
-      reader.onloadend = () => setPreviewUrl(reader.result);
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const resetForm = () => {
-    setFormData({
-      title: '',
-      description: '',
-      category: 'wallet',
-      location: '',
-      latitude: null,
-      longitude: null,
-      itemType: 'lost',
-      rewardAmount: 0,
-      contactInfo: '',
-      image: null
-    });
-    setPreviewUrl(null);
-    setFormErrors({});
-  };
-
-  const handleSubmit = async () => {
-    if (!validateForm()) {
-      showNotification('Please fix all errors before submitting', 'error');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      
-      const data = new FormData();
-      data.append('title', formData.title.trim());
-      data.append('description', formData.description.trim());
-      data.append('category', formData.category);
-      data.append('location', formData.location.trim());
-      data.append('item_type', formData.itemType);
-      data.append('reward_amount', formData.rewardAmount);
-      data.append('contact_info', formData.contactInfo.trim());
-      data.append('user_id', userId);
-      data.append('image', formData.image);
-      
-      if (formData.latitude) data.append('latitude', formData.latitude);
-      if (formData.longitude) data.append('longitude', formData.longitude);
-
-      const response = await fetch(`${API_BASE}/api/items/report`, {
-        method: 'POST',
-        body: data
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Submission failed');
-      }
-
-      showNotification('Item reported successfully! AI is searching for matches...', 'success');
-      resetForm();
-      setTimeout(() => setActiveTab('browse'), 2000);
-    } catch (error) {
-      console.error('Submission error:', error);
-      showNotification(error.message || 'Failed to report item', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getLocation = () => {
-    if (!navigator.geolocation) {
-      showNotification('Geolocation not supported by your browser', 'error');
-      return;
-    }
-
-    setLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setFormData({
-          ...formData,
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude
-        });
-        showNotification('Location captured successfully!', 'success');
-        setLoading(false);
-      },
-      (error) => {
-        let message = 'Could not get location';
-        if (error.code === error.PERMISSION_DENIED) {
-          message = 'Location permission denied. Please enable location access.';
-        } else if (error.code === error.POSITION_UNAVAILABLE) {
-          message = 'Location information unavailable';
-        } else if (error.code === error.TIMEOUT) {
-          message = 'Location request timed out';
-        }
-        showNotification(message, 'error');
-        setLoading(false);
-      },
-      { timeout: 10000, enableHighAccuracy: true }
-    );
-  };
-
-  const filteredItems = items.filter(item => {
-    const matchesType = filterType === 'all' || item.item_type === filterType;
-    const matchesSearch = !searchQuery || 
-      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.location.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesType && matchesSearch;
-  });
-
-  const Notification = () => {
-    if (!notification) return null;
-    const bgColor = notification.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500';
-    
-    return (
-      <div className={`fixed top-4 right-4 ${bgColor} text-white px-6 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-2 animate-slide-in`}>
-        {notification.type === 'success' ? <Check size={20} /> : <AlertCircle size={20} />}
-        <span className="font-medium">{notification.message}</span>
+    {stats && (
+      <div style={s.statsGrid}>
+        {[
+          { label: 'Total', value: stats.total_items, icon: TrendingUp },
+          { label: 'Lost', value: stats.lost_items, icon: Search },
+          { label: 'Found', value: stats.found_items, icon: Camera },
+          { label: 'Matched', value: stats.matched_items, icon: Check },
+        ].map(({ label, value, icon: Icon }) => (
+          <div key={label} style={s.statCard}>
+            <Icon size={16} color="#7a8eaa" strokeWidth={1.5} />
+            <span style={s.statValue}>{value}</span>
+            <span style={s.statLabel}>{label}</span>
+          </div>
+        ))}
       </div>
-    );
-  };
+    )}
 
-  const HomeTab = () => (
-    <div className="max-w-6xl mx-auto py-12 px-4">
-      <div className="text-center mb-16">
-        <h1 className="text-7xl font-black mb-4 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
-          Findora
-        </h1>
-        <p className="text-2xl text-gray-700 font-semibold mb-2">AI-Powered Lost & Found Platform</p>
-        <p className="text-lg text-gray-500">Reuniting people with their belongings using smart technology</p>
+    <div style={s.ctaGrid}>
+      <button
+        style={{ ...s.ctaCard, background: activeCTA === 'lost' ? '#1e3a5f' : '#ffffff', borderColor: activeCTA === 'lost' ? '#1e3a5f' : '#c5d0e0' }}
+        onClick={() => { setActiveCTA('lost'); setFormData(f => ({ ...f, itemType: 'lost' })); setTimeout(() => setActiveTab('report'), 200); }}
+      >
+        <div style={{ ...s.ctaIconBox, background: activeCTA === 'lost' ? 'rgba(255,255,255,0.18)' : '#eef1f7' }}>
+          <Search size={18} color={activeCTA === 'lost' ? '#ffffff' : '#1e3a5f'} strokeWidth={1.8} />
+        </div>
+        <div>
+          <p style={{ ...s.ctaTitle, color: activeCTA === 'lost' ? '#ffffff' : '#0f172a' }}>Lost Something?</p>
+          <p style={{ ...s.ctaSub, color: activeCTA === 'lost' ? 'rgba(255,255,255,0.72)' : '#5c718a' }}>Report &amp; let AI search for you</p>
+        </div>
+      </button>
+
+      <button
+        style={{ ...s.ctaCard, background: activeCTA === 'found' ? '#1a4d33' : '#ffffff', borderColor: activeCTA === 'found' ? '#1a4d33' : '#c5d0e0' }}
+        onClick={() => { setActiveCTA('found'); setFormData(f => ({ ...f, itemType: 'found' })); setTimeout(() => setActiveTab('report'), 200); }}
+      >
+        <div style={{ ...s.ctaIconBox, background: activeCTA === 'found' ? 'rgba(255,255,255,0.18)' : '#e8f2ec' }}>
+          <Camera size={18} color={activeCTA === 'found' ? '#ffffff' : '#1a4d33'} strokeWidth={1.8} />
+        </div>
+        <div>
+          <p style={{ ...s.ctaTitle, color: activeCTA === 'found' ? '#ffffff' : '#0f172a' }}>Found Something?</p>
+          <p style={{ ...s.ctaSub, color: activeCTA === 'found' ? 'rgba(255,255,255,0.72)' : '#5c718a' }}>Help return it to its owner</p>
+        </div>
+      </button>
+    </div>
+
+    <div style={s.howSection}>
+      <p style={s.sectionLabel}>How It Works</p>
+      {[
+        { step: '01', title: 'Upload & Describe', desc: 'Take a clear photo and describe your item with as much detail as possible.' },
+        { step: '02', title: 'AI Analyzes', desc: 'Our system cross-references image features, text, and location data intelligently.' },
+        { step: '03', title: 'Get Matched', desc: 'Receive a notification the moment a high-confidence match is found.' },
+      ].map(({ step, title, desc }, idx, arr) => (
+        <div key={step} style={{ ...s.howRow, ...(idx === arr.length - 1 ? { borderBottom: 'none', marginBottom: 0, paddingBottom: 0 } : {}) }}>
+          <span style={s.howStep}>{step}</span>
+          <div><p style={s.howTitle}>{title}</p><p style={s.howDesc}>{desc}</p></div>
+        </div>
+      ))}
+    </div>
+
+    <div style={s.badges}>
+      {['AI-Powered Matching', 'Secure & Private', 'Fast Results'].map(b => (
+        <span key={b} style={s.badge}>{b}</span>
+      ))}
+    </div>
+  </div>
+);
+
+// ─── Report Tab ───────────────────────────────────────────────────────────────
+const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUrl, setPreviewUrl, loading, handleSubmit, getLocation, showNotification }) => (
+  <div style={s.page}>
+    <div style={s.pageHeader}>
+      <p style={s.heroEyebrow}>Submit a Report</p>
+      <h2 style={s.pageTitle}>Report {formData.itemType === 'lost' ? 'Lost' : 'Found'} Item</h2>
+      <p style={s.pageSub}>The more detail you provide, the better our AI can find a match.</p>
+    </div>
+
+    <div style={s.toggle}>
+      {['lost', 'found'].map(t => (
+        <button key={t} onClick={() => setFormData(f => ({ ...f, itemType: t }))}
+          style={{ ...s.toggleBtn, background: formData.itemType === t ? (t === 'lost' ? '#1e3a5f' : '#1a4d33') : 'transparent', color: formData.itemType === t ? '#ffffff' : '#7a8eaa' }}>
+          {t === 'lost' ? 'Lost Item' : 'Found Item'}
+        </button>
+      ))}
+    </div>
+
+    <div style={s.formStack}>
+      {/* Photo */}
+      <div style={s.formGroup}>
+        <label style={s.label}>Photo <span style={s.req}>*</span></label>
+        <div style={{ ...s.uploadZone, ...(formErrors.image ? s.uploadZoneError : {}) }}>
+          {previewUrl ? (
+            <div style={s.previewWrap}>
+              <img src={previewUrl} alt="Preview" style={s.previewImg} />
+              <button onClick={() => { setPreviewUrl(null); setFormData(f => ({ ...f, image: null })); }} style={s.removeBtn}><X size={14} /></button>
+            </div>
+          ) : (
+            <label style={s.uploadLabel}>
+              <Upload size={22} color="#9aafc4" strokeWidth={1.5} />
+              <span style={s.uploadText}>Click to upload</span>
+              <span style={s.uploadHint}>JPG, PNG, WEBP — max 10 MB</span>
+              <input type="file" accept="image/*" onChange={e => {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (file.size > 10 * 1024 * 1024) { showNotification('Image too large — max 10 MB', 'error'); return; }
+                setFormData(f => ({ ...f, image: file }));
+                setFormErrors(fe => ({ ...fe, image: null }));
+                const reader = new FileReader();
+                reader.onloadend = () => setPreviewUrl(reader.result);
+                reader.readAsDataURL(file);
+              }} style={{ display: 'none' }} />
+            </label>
+          )}
+        </div>
+        <FieldError msg={formErrors.image} />
       </div>
 
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-16">
-          <div className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
-            <div className="flex items-center justify-between mb-3">
-              <TrendingUp className="text-indigo-600" size={32} />
-              <div className="text-4xl font-bold text-indigo-900">{stats.total_items}</div>
-            </div>
-            <div className="text-sm font-medium text-gray-600">Total Items</div>
-          </div>
-          <div className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
-            <div className="flex items-center justify-between mb-3">
-              <Search className="text-rose-600" size={32} />
-              <div className="text-4xl font-bold text-rose-900">{stats.lost_items}</div>
-            </div>
-            <div className="text-sm font-medium text-gray-600">Lost Items</div>
-          </div>
-          <div className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
-            <div className="flex items-center justify-between mb-3">
-              <Camera className="text-emerald-600" size={32} />
-              <div className="text-4xl font-bold text-emerald-900">{stats.found_items}</div>
-            </div>
-            <div className="text-sm font-medium text-gray-600">Found Items</div>
-          </div>
-          <div className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow border border-gray-100">
-            <div className="flex items-center justify-between mb-3">
-              <Check className="text-purple-600" size={32} />
-              <div className="text-4xl font-bold text-purple-900">{stats.matched_items}</div>
-            </div>
-            <div className="text-sm font-medium text-gray-600">Matched</div>
+      {/* Title */}
+      <div style={s.formGroup}>
+        <label style={s.label}>Item Title <span style={s.req}>*</span></label>
+        <input type="text" value={formData.title} placeholder="e.g. Black leather wallet"
+          onChange={e => { setFormData(f => ({ ...f, title: e.target.value })); setFormErrors(fe => ({ ...fe, title: null })); }}
+          style={{ ...s.input, ...(formErrors.title ? s.inputError : {}) }} />
+        <FieldError msg={formErrors.title} />
+      </div>
+
+      {/* Category */}
+      <div style={s.formGroup}>
+        <label style={s.label}>Category <span style={s.req}>*</span></label>
+        <select value={formData.category} onChange={e => setFormData(f => ({ ...f, category: e.target.value }))} style={s.input}>
+          {['wallet','phone','keys','bag','jewelry','documents','electronics','clothing','accessories','other'].map(c => (
+            <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Description */}
+      <div style={s.formGroup}>
+        <label style={s.label}>Description <span style={s.req}>*</span></label>
+        <textarea value={formData.description} rows={4}
+          placeholder="Describe color, size, brand, unique marks, where and when it was lost or found..."
+          onChange={e => { setFormData(f => ({ ...f, description: e.target.value })); setFormErrors(fe => ({ ...fe, description: null })); }}
+          style={{ ...s.input, ...s.textarea, ...(formErrors.description ? s.inputError : {}) }} />
+        <div style={s.charRow}>
+          <FieldError msg={formErrors.description} />
+          <span style={s.charCount}>{formData.description.length} chars</span>
+        </div>
+      </div>
+
+      {/* Location */}
+      <div style={s.formGroup}>
+        <label style={s.label}>Location <span style={s.req}>*</span></label>
+        <div style={s.locationRow}>
+          <input type="text" value={formData.location} placeholder="e.g. Central Bus Station, Main Street"
+            onChange={e => { setFormData(f => ({ ...f, location: e.target.value })); setFormErrors(fe => ({ ...fe, location: null })); }}
+            style={{ ...s.input, flex: 1, ...(formErrors.location ? s.inputError : {}) }} />
+          <button onClick={getLocation} disabled={loading} style={s.gpsBtn} title="Use GPS">
+            <MapPin size={16} color="#ffffff" strokeWidth={1.5} />
+          </button>
+        </div>
+        {formData.latitude && (
+          <p style={s.gpsConfirm}><Check size={13} /> GPS: {formData.latitude.toFixed(4)}, {formData.longitude.toFixed(4)}</p>
+        )}
+        <FieldError msg={formErrors.location} />
+      </div>
+
+      {/* Contact */}
+      <div style={s.formGroup}>
+        <label style={s.label}>Contact Info <span style={s.req}>*</span></label>
+        <input type="text" value={formData.contactInfo} placeholder="Email or phone number"
+          onChange={e => { setFormData(f => ({ ...f, contactInfo: e.target.value })); setFormErrors(fe => ({ ...fe, contactInfo: null })); }}
+          style={{ ...s.input, ...(formErrors.contactInfo ? s.inputError : {}) }} />
+        <FieldError msg={formErrors.contactInfo} />
+      </div>
+
+      {/* Reward */}
+      {formData.itemType === 'lost' && (
+        <div style={s.formGroup}>
+          <label style={s.label}>Reward Amount <span style={s.optional}>(optional)</span></label>
+          <div style={s.rewardWrap}>
+            <span style={s.currencySymbol}>$</span>
+            <input type="number" value={formData.rewardAmount || ''} placeholder="0" min="0" step="0.01"
+              onChange={e => setFormData(f => ({ ...f, rewardAmount: parseFloat(e.target.value) || 0 }))}
+              style={{ ...s.input, paddingLeft: 36 }} />
           </div>
         </div>
       )}
 
-      <div className="grid md:grid-cols-2 gap-8 mb-16">
-        <button
-          onClick={() => {
-            setFormData({ ...formData, itemType: 'lost' });
-            setActiveTab('report');
-          }}
-          className="group bg-gradient-to-br from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white p-12 rounded-3xl shadow-xl transition-all hover:scale-105 hover:shadow-2xl"
-        >
-          <Search size={64} className="mx-auto mb-6 group-hover:scale-110 transition-transform" />
-          <h3 className="text-4xl font-bold mb-4">Lost Something?</h3>
-          <p className="text-xl opacity-90">Report your lost item and our AI will help you find it</p>
-        </button>
-
-        <button
-          onClick={() => {
-            setFormData({ ...formData, itemType: 'found' });
-            setActiveTab('report');
-          }}
-          className="group bg-gradient-to-br from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white p-12 rounded-3xl shadow-xl transition-all hover:scale-105 hover:shadow-2xl"
-        >
-          <Camera size={64} className="mx-auto mb-6 group-hover:scale-110 transition-transform" />
-          <h3 className="text-4xl font-bold mb-4">Found Something?</h3>
-          <p className="text-xl opacity-90">Help return it to the rightful owner</p>
-        </button>
-      </div>
-
-      <div className="bg-white p-10 rounded-3xl shadow-xl border border-gray-100">
-        <h2 className="text-4xl font-bold mb-10 text-center text-gray-900">How It Works</h2>
-        <div className="grid md:grid-cols-3 gap-8">
-          {[
-            { num: 1, title: 'Upload & Describe', desc: 'Take a photo and describe your item with as much detail as possible', color: 'indigo', icon: Upload },
-            { num: 2, title: 'AI Analyzes', desc: 'Our advanced AI analyzes images, text, and location to find matches', color: 'purple', icon: Search },
-            { num: 3, title: 'Get Matched', desc: 'Receive instant notifications when a potential match is discovered', color: 'emerald', icon: Bell }
-          ].map((step) => {
-            const Icon = step.icon;
-            return (
-              <div key={step.num} className="text-center">
-                <div className={`bg-gradient-to-br from-${step.color}-500 to-${step.color}-600 text-white w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg`}>
-                  <Icon size={36} />
-                </div>
-                <h3 className="font-bold text-xl mb-3 text-gray-900">{step.title}</h3>
-                <p className="text-gray-600">{step.desc}</p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="mt-12 text-center">
-        <div className="inline-flex items-center gap-6 bg-white px-8 py-4 rounded-full shadow-lg border border-gray-100">
-          <span className="flex items-center gap-2 text-sm text-gray-600"><span>🤖</span><span className="font-medium">AI-Powered</span></span>
-          <span className="w-px h-4 bg-gray-300"></span>
-          <span className="flex items-center gap-2 text-sm text-gray-600"><span>🔒</span><span className="font-medium">Secure & Private</span></span>
-          <span className="w-px h-4 bg-gray-300"></span>
-          <span className="flex items-center gap-2 text-sm text-gray-600"><span>⚡</span><span className="font-medium">Fast Matching</span></span>
-        </div>
-      </div>
+      {/* Submit */}
+      <button onClick={handleSubmit} disabled={loading}
+        style={{ ...s.submitBtn, background: formData.itemType === 'lost' ? '#1e3a5f' : '#1a4d33', opacity: loading ? 0.65 : 1, cursor: loading ? 'not-allowed' : 'pointer' }}>
+        {loading ? <Spinner size={18} color="#fff" /> : `Submit ${formData.itemType === 'lost' ? 'Lost' : 'Found'} Report`}
+      </button>
     </div>
-  );
+  </div>
+);
 
-  const ReportTab = () => (
-    <div className="max-w-3xl mx-auto py-8 px-4">
-      <div className="mb-8">
-        <h2 className="text-5xl font-bold mb-3 text-gray-900">
-          Report {formData.itemType === 'lost' ? 'Lost' : 'Found'} Item
-        </h2>
-        <p className="text-lg text-gray-600">Our AI will automatically search for potential matches in our database</p>
+// ─── Browse Tab ───────────────────────────────────────────────────────────────
+const BrowseTab = ({ items, loading, filterType, setFilterType, searchQuery, setSearchQuery, setActiveTab }) => {
+  const filteredItems = items.filter(item => {
+    const matchesType = filterType === 'all' || item.item_type === filterType;
+    const matchesSearch = !searchQuery || [item.title, item.description, item.location].some(f => f?.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesType && matchesSearch;
+  });
+
+  return (
+    <div style={s.page}>
+      <div style={s.pageHeader}>
+        <p style={s.heroEyebrow}>Database</p>
+        <h2 style={s.pageTitle}>Browse Items</h2>
       </div>
-
-      <div className="space-y-6">
-        <div className="flex gap-4 p-2 bg-gray-100 rounded-2xl">
-          <button
-            onClick={() => setFormData({ ...formData, itemType: 'lost' })}
-            className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all ${formData.itemType === 'lost' ? 'bg-rose-500 text-white shadow-lg scale-105' : 'text-gray-600 hover:bg-gray-200'}`}
-          >
-            Lost Item
-          </button>
-          <button
-            onClick={() => setFormData({ ...formData, itemType: 'found' })}
-            className={`flex-1 py-4 rounded-xl font-bold text-lg transition-all ${formData.itemType === 'found' ? 'bg-emerald-500 text-white shadow-lg scale-105' : 'text-gray-600 hover:bg-gray-200'}`}
-          >
-            Found Item
-          </button>
+      <div style={s.searchRow}>
+        <div style={s.searchWrap}>
+          <Search size={15} color="#9aafc4" style={s.searchIcon} strokeWidth={1.5} />
+          <input type="text" placeholder="Search by title, description, location..."
+            value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={s.searchInput} />
         </div>
-
-        <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">Item Photo <span className="text-rose-500">*</span></label>
-          <div className={`border-3 border-dashed rounded-2xl p-10 text-center transition-all ${formErrors.image ? 'border-rose-300 bg-rose-50' : 'border-gray-300 hover:border-indigo-400 hover:bg-gray-50'}`}>
-            {previewUrl ? (
-              <div className="relative">
-                <img src={previewUrl} alt="Preview" className="max-h-96 mx-auto rounded-xl shadow-xl object-contain" />
-                <button
-                  onClick={() => { setPreviewUrl(null); setFormData({ ...formData, image: null }); }}
-                  className="absolute top-4 right-4 bg-rose-500 text-white p-3 rounded-full hover:bg-rose-600 shadow-lg transition-all hover:scale-110"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-            ) : (
-              <label className="cursor-pointer block">
-                <Upload size={64} className="mx-auto text-gray-400 mb-4" />
-                <p className="text-gray-700 text-xl font-medium mb-1">Click to upload image</p>
-                <p className="text-gray-500 text-sm">Max 10MB • JPG, PNG, WEBP</p>
-                <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={handleImageChange} className="hidden" />
-              </label>
-            )}
-          </div>
-          {formErrors.image && <p className="mt-2 text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.image}</p>}
-        </div>
-
-        <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">Title <span className="text-rose-500">*</span></label>
-          <input
-            type="text"
-            value={formData.title}
-            onChange={(e) => { setFormData({ ...formData, title: e.target.value }); if (formErrors.title) setFormErrors({ ...formErrors, title: null }); }}
-            placeholder="e.g., Black Leather Wallet"
-            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg transition-all ${formErrors.title ? 'border-rose-300 bg-rose-50' : 'border-gray-300'}`}
-          />
-          {formErrors.title && <p className="mt-2 text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.title}</p>}
-        </div>
-
-        <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">Category <span className="text-rose-500">*</span></label>
-          <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} className="w-full px-5 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg">
-            <option value="wallet">Wallet</option>
-            <option value="phone">Phone</option>
-            <option value="keys">Keys</option>
-            <option value="bag">Bag/Backpack</option>
-            <option value="jewelry">Jewelry</option>
-            <option value="documents">Documents</option>
-            <option value="electronics">Electronics</option>
-            <option value="clothing">Clothing</option>
-            <option value="accessories">Accessories</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">Description <span className="text-rose-500">*</span></label>
-          <textarea
-            value={formData.description}
-            onChange={(e) => { setFormData({ ...formData, description: e.target.value }); if (formErrors.description) setFormErrors({ ...formErrors, description: null }); }}
-            placeholder="Describe the item in detail: color, size, brand, distinctive features, where and when it was lost/found..."
-            rows={5}
-            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg transition-all ${formErrors.description ? 'border-rose-300 bg-rose-50' : 'border-gray-300'}`}
-          />
-          <div className="flex justify-between items-center mt-2">
-            {formErrors.description && <p className="text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.description}</p>}
-            <p className="text-sm text-gray-500 ml-auto">{formData.description.length} characters</p>
-          </div>
-        </div>
-
-        <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">Location <span className="text-rose-500">*</span></label>
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={formData.location}
-              onChange={(e) => { setFormData({ ...formData, location: e.target.value }); if (formErrors.location) setFormErrors({ ...formErrors, location: null }); }}
-              placeholder="e.g., Central Bus Station, Main Street, Downtown Mall"
-              className={`flex-1 px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg transition-all ${formErrors.location ? 'border-rose-300 bg-rose-50' : 'border-gray-300'}`}
-            />
-            <button onClick={getLocation} disabled={loading} className="px-6 py-4 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 flex items-center gap-2 disabled:opacity-50 font-medium shadow-lg hover:shadow-xl transition-all">
-              <MapPin size={20} />
-              <span className="hidden sm:inline">GPS</span>
+        <div style={s.filterRow}>
+          {['all','lost','found'].map(t => (
+            <button key={t} onClick={() => setFilterType(t)}
+              style={{ ...s.filterBtn, background: filterType === t ? '#1e3a5f' : '#ffffff', color: filterType === t ? '#ffffff' : '#4a6080', borderColor: filterType === t ? '#1e3a5f' : '#dde3ed' }}>
+              {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
-          </div>
-          {formErrors.location && <p className="mt-2 text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.location}</p>}
-          {formData.latitude && (
-            <p className="text-sm text-emerald-600 mt-2 font-medium flex items-center gap-1">
-              <Check size={16} />
-              GPS coordinates captured ({formData.latitude.toFixed(4)}, {formData.longitude.toFixed(4)})
-            </p>
-          )}
-        </div>
-
-        <div>
-          <label className="block font-bold mb-3 text-lg text-gray-900">Contact Info <span className="text-rose-500">*</span></label>
-          <input
-            type="text"
-            value={formData.contactInfo}
-            onChange={(e) => { setFormData({ ...formData, contactInfo: e.target.value }); if (formErrors.contactInfo) setFormErrors({ ...formErrors, contactInfo: null }); }}
-            placeholder="Email address or phone number"
-            className={`w-full px-5 py-4 border-2 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg transition-all ${formErrors.contactInfo ? 'border-rose-300 bg-rose-50' : 'border-gray-300'}`}
-          />
-          {formErrors.contactInfo && <p className="mt-2 text-sm text-rose-600 flex items-center gap-1"><AlertCircle size={16} />{formErrors.contactInfo}</p>}
-        </div>
-
-        {formData.itemType === 'lost' && (
-          <div>
-            <label className="block font-bold mb-3 text-lg text-gray-900">Reward Amount (Optional)</label>
-            <div className="relative">
-              <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-500 text-lg font-medium">$</span>
-              <input
-                type="number"
-                value={formData.rewardAmount || ''}
-                onChange={(e) => setFormData({ ...formData, rewardAmount: parseFloat(e.target.value) || 0 })}
-                placeholder="0"
-                min="0"
-                step="0.01"
-                className="w-full pl-10 pr-5 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg"
-              />
-            </div>
-          </div>
-        )}
-
-        <button
-          onClick={handleSubmit}
-          disabled={loading}
-          className={`w-full py-6 rounded-2xl font-bold text-white text-xl shadow-xl ${
-            formData.itemType === 'lost'
-              ? 'bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700'
-              : 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700'
-          } ${loading ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105 transition-all hover:shadow-2xl'}`}
-        >
-          {loading ? (
-            <span className="flex items-center justify-center gap-2">
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              Processing...
-            </span>
-          ) : (
-            `Report ${formData.itemType === 'lost' ? 'Lost' : 'Found'} Item`
-          )}
-        </button>
-      </div>
-    </div>
-  );
-
-  const BrowseTab = () => (
-    <div className="max-w-7xl mx-auto py-8 px-4">
-      <div className="mb-8">
-        <h2 className="text-5xl font-bold mb-6 text-gray-900">Browse Items</h2>
-        <div className="flex flex-col sm:flex-row gap-4 mb-6">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-            <input
-              type="text"
-              placeholder="Search by title, description, or location..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-4 py-4 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 text-lg"
-            />
-          </div>
-          <div className="flex gap-2">
-            {['all', 'lost', 'found'].map((type) => (
-              <button
-                key={type}
-                onClick={() => setFilterType(type)}
-                className={`px-6 py-4 rounded-xl font-semibold transition-all capitalize ${
-                  filterType === type
-                    ? type === 'all' ? 'bg-indigo-500 text-white shadow-lg'
-                      : type === 'lost' ? 'bg-rose-500 text-white shadow-lg'
-                      : 'bg-emerald-500 text-white shadow-lg'
-                    : 'bg-white text-gray-700 border-2 border-gray-300 hover:border-indigo-300'
-                }`}
-              >
-                {type.charAt(0).toUpperCase() + type.slice(1)}
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
       </div>
-
       {loading ? (
-        <div className="text-center py-24">
-          <div className="w-20 h-20 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
-          <p className="text-2xl text-gray-600 font-medium">Loading items...</p>
-        </div>
+        <div style={s.loadingState}><Spinner size={28} color="#1e3a5f" /><span style={s.loadingText}>Loading items...</span></div>
       ) : filteredItems.length === 0 ? (
-        <div className="text-center py-24 bg-white rounded-3xl border-2 border-dashed border-gray-300">
-          <Search size={80} className="mx-auto text-gray-300 mb-6" />
-          <p className="text-2xl text-gray-700 font-bold mb-2">
-            {searchQuery || filterType !== 'all' ? 'No matching items found' : 'No items reported yet'}
-          </p>
-          <p className="text-gray-500 mb-8 text-lg">
-            {searchQuery || filterType !== 'all' ? 'Try adjusting your search or filters' : 'Be the first to report a lost or found item'}
-          </p>
-          {!searchQuery && filterType === 'all' && (
-            <button onClick={() => setActiveTab('report')} className="px-10 py-4 bg-indigo-500 text-white rounded-xl hover:bg-indigo-600 font-bold text-lg shadow-lg hover:shadow-xl transition-all hover:scale-105">
-              Report First Item
-            </button>
-          )}
+        <div style={s.emptyState}>
+          <Search size={36} color="#c2cfe0" strokeWidth={1} />
+          <p style={s.emptyTitle}>{searchQuery || filterType !== 'all' ? 'No matching items' : 'No items yet'}</p>
+          <p style={s.emptyDesc}>{searchQuery || filterType !== 'all' ? 'Try adjusting your search or filters.' : 'Be the first to report an item.'}</p>
+          {!searchQuery && filterType === 'all' && <button onClick={() => setActiveTab('report')} style={s.emptyBtn}>Report First Item</button>}
         </div>
       ) : (
         <>
-          <p className="text-gray-600 mb-6 text-lg">Showing {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}</p>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredItems.map((item) => (
-              <div key={item.item_id} className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-2xl transition-all hover:scale-105 border border-gray-100">
-                <div className="relative h-64 bg-gradient-to-br from-gray-100 to-gray-200">
-                  {item.image_path && (
-                    // ✅ Image URLs now point to Render backend in production
-                    <img src={`${API_BASE}${item.image_path}`} alt={item.title} className="w-full h-full object-cover" />
-                  )}
-                  <div className={`absolute top-4 right-4 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-xl ${item.item_type === 'lost' ? 'bg-rose-500' : 'bg-emerald-500'}`}>
-                    {item.item_type === 'lost' ? 'LOST' : 'FOUND'}
-                  </div>
+          <p style={s.resultCount}>{filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}</p>
+          <div style={s.cardGrid}>
+            {filteredItems.map(item => (
+              <div key={item.item_id} style={s.itemCard}>
+                <div style={s.itemImageWrap}>
+                  {item.image_path
+                    ? <img src={`${API_BASE}${item.image_path}`} alt={item.title} style={s.itemImage} />
+                    : <div style={s.itemImagePlaceholder}><Camera size={28} color="#c2cfe0" strokeWidth={1} /></div>}
+                  <span style={{ ...s.typeBadge, background: item.item_type === 'lost' ? '#1e3a5f' : '#1a4d33', color: '#ffffff' }}>
+                    {item.item_type.toUpperCase()}
+                  </span>
                 </div>
-                <div className="p-6">
-                  <h3 className="font-bold text-2xl mb-3 text-gray-900">{item.title}</h3>
-                  <p className="text-gray-600 text-sm mb-4 line-clamp-2">{item.description}</p>
-                  <div className="flex items-center text-sm text-gray-500 mb-3">
-                    <MapPin size={18} className="mr-2 flex-shrink-0" />
-                    <span className="line-clamp-1">{item.location}</span>
+                <div style={s.itemBody}>
+                  <p style={s.itemTitle}>{item.title}</p>
+                  <p style={s.itemDesc}>{item.description}</p>
+                  <div style={s.itemMeta}>
+                    <span style={s.itemMetaRow}><MapPin size={12} strokeWidth={1.5} color="#7a8eaa" />{item.location}</span>
+                    <span style={s.itemMetaRow}><Clock size={12} strokeWidth={1.5} color="#7a8eaa" />{new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                   </div>
-                  <div className="flex items-center text-xs text-gray-400 mb-4">
-                    <Clock size={16} className="mr-1" />
-                    {new Date(item.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
-                  </div>
-                  {item.reward_amount > 0 && (
-                    <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl px-4 py-3 text-emerald-700 font-bold text-sm flex items-center justify-between">
-                      <span>Reward Offered</span>
-                      <span className="text-lg">${item.reward_amount}</span>
-                    </div>
-                  )}
+                  {item.reward_amount > 0 && <div style={s.rewardBadge}>Reward: ${item.reward_amount}</div>}
                 </div>
               </div>
             ))}
@@ -678,138 +285,390 @@ const FindoraApp = () => {
       )}
     </div>
   );
+};
 
-  const MatchesTab = () => (
-    <div className="max-w-6xl mx-auto py-10 px-4">
-      <div className="mb-10">
-        <div className="flex items-center gap-3 mb-4">
-          <Sparkles className="text-purple-600" size={48} />
-          <h2 className="text-5xl font-bold text-gray-900">AI Matches</h2>
-        </div>
-        <p className="text-lg text-gray-600">High-confidence matches found by our AI (80%+ confidence score)</p>
+// ─── Matches Tab ──────────────────────────────────────────────────────────────
+const MatchesTab = ({ matches, loading, setActiveTab }) => (
+  <div style={s.page}>
+    <div style={s.pageHeader}>
+      <p style={s.heroEyebrow}>AI Results</p>
+      <h2 style={s.pageTitle}>Potential Matches</h2>
+      <p style={s.pageSub}>Showing matches with 80%+ confidence score.</p>
+    </div>
+    {loading ? (
+      <div style={s.loadingState}><Spinner size={28} color="#1e3a5f" /><span style={s.loadingText}>Analyzing matches...</span></div>
+    ) : matches.length === 0 ? (
+      <div style={s.emptyState}>
+        <Sparkles size={36} color="#c2cfe0" strokeWidth={1} />
+        <p style={s.emptyTitle}>No high-confidence matches yet</p>
+        <p style={s.emptyDesc}>We will notify you once a potential match is identified.</p>
+        <button onClick={() => setActiveTab('report')} style={s.emptyBtn}>Submit a Report</button>
       </div>
-
-      {loading ? (
-        <div className="text-center py-24">
-          <div className="w-20 h-20 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
-          <p className="text-2xl text-gray-600 font-medium">Analyzing matches...</p>
-        </div>
-      ) : matches.length === 0 ? (
-        <div className="text-center py-24 bg-white rounded-3xl border-2 border-dashed border-gray-300">
-          <Sparkles size={80} className="mx-auto text-gray-300 mb-6" />
-          <p className="text-2xl text-gray-700 font-bold mb-2">No high-confidence matches yet</p>
-          <p className="text-gray-500 text-lg mb-8">Our AI will notify you when potential matches are found</p>
-          <button onClick={() => setActiveTab('report')} className="px-10 py-4 bg-purple-500 text-white rounded-xl hover:bg-purple-600 font-bold text-lg shadow-lg hover:shadow-xl transition-all hover:scale-105">
-            Report an Item
-          </button>
-        </div>
-      ) : (
-        <div className="grid md:grid-cols-2 gap-6">
-          {matches.map((match, index) => (
-            <div key={index} className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-all border border-gray-100">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="text-purple-600" size={24} />
-                  <h3 className="text-xl font-bold text-gray-900">Match Found</h3>
-                </div>
-                <div className={`px-4 py-2 rounded-xl text-white text-sm font-bold ${match.confidence_score >= 0.9 ? 'bg-emerald-500' : 'bg-purple-500'}`}>
-                  {match.confidence_score >= 0.9 ? 'High Match' : 'Good Match'}
-                </div>
+    ) : (
+      <div style={s.matchGrid}>
+        {matches.map((match, i) => (
+          <div key={i} style={s.matchCard}>
+            <div style={s.matchHeader}>
+              <span style={s.matchLabel}>Match Found</span>
+              <span style={{ ...s.matchScore, color: match.confidence_score >= 0.9 ? '#1a4d33' : '#1e3a5f' }}>
+                {Math.round(match.confidence_score * 100)}%
+              </span>
+            </div>
+            {match.sourceItem && (
+              <div style={s.matchSource}>
+                <p style={s.matchSourceLabel}>Source Item</p>
+                <p style={s.matchSourceTitle}>{match.sourceItem.title}</p>
+                <p style={s.matchSourceDesc}>{match.sourceItem.description}</p>
               </div>
-
-              {match.sourceItem && (
-                <div className="mb-6 p-4 bg-gray-50 rounded-xl">
-                  <p className="text-sm text-gray-500 mb-2">Source Item</p>
-                  <h4 className="font-bold text-lg text-gray-900 mb-1">{match.sourceItem.title}</h4>
-                  <p className="text-sm text-gray-600 line-clamp-2">{match.sourceItem.description}</p>
-                </div>
-              )}
-
-              <div className="space-y-4">
-                <div>
-                  <p className="text-sm font-semibold text-gray-700 mb-2">Match Confidence</p>
-                  <div className="w-full bg-gray-200 h-6 rounded-full overflow-hidden">
-                    <div
-                      className={`h-6 rounded-full transition-all duration-500 ${match.confidence_score >= 0.9 ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' : 'bg-gradient-to-r from-purple-500 to-purple-600'}`}
-                      style={{ width: `${Math.round(match.confidence_score * 100)}%` }}
-                    />
-                  </div>
-                  <p className={`mt-2 text-2xl font-bold ${match.confidence_score >= 0.9 ? 'text-emerald-700' : 'text-purple-700'}`}>
-                    {Math.round(match.confidence_score * 100)}%
-                  </p>
-                </div>
+            )}
+            <div style={s.matchBarWrap}>
+              <div style={s.matchBarTrack}>
+                <div style={{ ...s.matchBarFill, width: `${Math.round(match.confidence_score * 100)}%`, background: match.confidence_score >= 0.9 ? '#1a4d33' : '#1e3a5f' }} />
               </div>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+            <p style={s.matchConfidenceLabel}>{match.confidence_score >= 0.9 ? 'High Confidence' : 'Good Confidence'}</p>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+);
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+const FindoraApp = () => {
+  const [activeTab, setActiveTab] = useState('home');
+  const [activeCTA, setActiveCTA] = useState(null);
+  const [items, setItems] = useState([]);
+  const [matches, setMatches] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [userId, setUserId] = useState(localStorage.getItem('findora_user_id') || null);
+  const [stats, setStats] = useState(null);
+  const [filterType, setFilterType] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [notification, setNotification] = useState(null);
+  const [formErrors, setFormErrors] = useState({});
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [formData, setFormData] = useState({
+    title: '', description: '', category: 'wallet', location: '',
+    latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0, contactInfo: '', image: null
+  });
+
+  useEffect(() => { if (!userId) autoRegisterUser(); }, [userId]);
+  useEffect(() => {
+    if (activeTab === 'browse') fetchItems();
+    if (activeTab === 'home') fetchStats();
+    if (activeTab === 'matches') fetchMatches();
+  }, [activeTab]);
+
+  const autoRegisterUser = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/users/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `user${Date.now()}@findora.app`, name: 'User', phone: '' }) });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setUserId(data.user_id);
+      localStorage.setItem('findora_user_id', data.user_id);
+    } catch { showNotification('Connection error', 'error'); }
+  };
+
+  const showNotification = useCallback((message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 4000);
+  }, []);
+
+  const fetchStats = async () => {
+    try { const res = await fetch(`${API_BASE}/api/stats`); if (res.ok) setStats(await res.json()); } catch {}
+  };
+
+  const fetchItems = async () => {
+    try { setLoading(true); const res = await fetch(`${API_BASE}/api/items`); if (res.ok) setItems(await res.json()); }
+    catch { showNotification('Failed to load items', 'error'); } finally { setLoading(false); }
+  };
+
+  const fetchMatches = async () => {
+    try {
+      setLoading(true);
+      const allMatches = [];
+      let itemsToCheck = items;
+      if (!items.length) { const res = await fetch(`${API_BASE}/api/items`); if (res.ok) { itemsToCheck = await res.json(); setItems(itemsToCheck); } }
+      for (const item of itemsToCheck) {
+        const res = await fetch(`${API_BASE}/api/matches/${item.item_id}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        allMatches.push(...data.filter(m => m.confidence_score >= 0.8).map(m => ({ ...m, sourceItem: item })));
+      }
+      setMatches(allMatches);
+    } catch { showNotification('Failed to load matches', 'error'); } finally { setLoading(false); }
+  };
+
+  const validateForm = () => {
+    const errors = {};
+    if (!formData.title.trim()) errors.title = 'Title is required';
+    if (!formData.description.trim() || formData.description.length < 10) errors.description = 'Description must be at least 10 characters';
+    if (!formData.location.trim()) errors.location = 'Location is required';
+    if (!formData.contactInfo.trim()) errors.contactInfo = 'Contact info is required';
+    if (!formData.image) errors.image = 'Photo is required';
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) { showNotification('Please fix the errors below', 'error'); return; }
+    try {
+      setLoading(true);
+      const data = new FormData();
+      data.append('title', formData.title.trim()); data.append('description', formData.description.trim());
+      data.append('category', formData.category); data.append('location', formData.location.trim());
+      data.append('item_type', formData.itemType); data.append('reward_amount', formData.rewardAmount);
+      data.append('contact_info', formData.contactInfo.trim()); data.append('user_id', userId); data.append('image', formData.image);
+      if (formData.latitude) data.append('latitude', formData.latitude);
+      if (formData.longitude) data.append('longitude', formData.longitude);
+      const res = await fetch(`${API_BASE}/api/items/report`, { method: 'POST', body: data });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message || 'Submission failed'); }
+      showNotification('Item reported. Scanning for matches...', 'success');
+      setFormData({ title: '', description: '', category: 'wallet', location: '', latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0, contactInfo: '', image: null });
+      setPreviewUrl(null); setFormErrors({});
+      setTimeout(() => setActiveTab('browse'), 1800);
+    } catch (err) { showNotification(err.message || 'Submission failed', 'error'); } finally { setLoading(false); }
+  };
+
+  const getLocation = () => {
+    if (!navigator.geolocation) { showNotification('Geolocation not supported', 'error'); return; }
+    setLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      pos => { setFormData(f => ({ ...f, latitude: pos.coords.latitude, longitude: pos.coords.longitude })); showNotification('Location captured', 'success'); setLoading(false); },
+      () => { showNotification('Could not get location', 'error'); setLoading(false); },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
-      <Notification />
+    <div style={s.root}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap');
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #f0f2f5 !important; -webkit-font-smoothing: antialiased; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .tab-fade { animation: fadeUp 0.28s ease both; }
+        button { cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; }
+        input, textarea, select { font-family: inherit; font-size: inherit; outline: none; color: #0f172a; background: #ffffff; }
+        input::placeholder, textarea::placeholder { color: #9aafc4 !important; }
+        input:focus, textarea:focus, select:focus { border-color: #1e3a5f !important; box-shadow: 0 0 0 3px rgba(30,58,95,0.1); }
+        select option { color: #0f172a; background: #ffffff; }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: #f0f2f5; }
+        ::-webkit-scrollbar-thumb { background: #c5d0e0; border-radius: 10px; }
+      `}</style>
 
-      <header className="bg-white shadow-md sticky top-0 z-40 border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 py-5 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <div className="bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-3 rounded-2xl shadow-lg">
-              <Search size={32} className="text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-black bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Findora</h1>
-              <p className="text-xs text-gray-500 font-medium">AI-Powered Platform</p>
-            </div>
+      {notification && (
+        <div style={{ ...s.notification, background: notification.type === 'success' ? '#1a4d33' : '#7f1d1d' }}>
+          {notification.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
+          <span>{notification.message}</span>
+        </div>
+      )}
+
+      <header style={s.header}>
+        <div style={s.headerInner}>
+          <div style={s.logo}>
+            <div style={s.logoMark}><Search size={15} color="#ffffff" strokeWidth={2} /></div>
+            <div><p style={s.logoName}>Findora</p><p style={s.logoTag}>AI Lost &amp; Found</p></div>
           </div>
-          <button className="relative p-3 hover:bg-gray-100 rounded-xl transition-colors" aria-label="Notifications">
-            <Bell size={26} />
-            <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse"></span>
+          <button style={s.bellBtn}>
+            <Bell size={17} strokeWidth={1.5} color="#4a6080" />
+            <span style={s.bellDot} />
           </button>
         </div>
       </header>
 
-      <nav className="bg-white border-b shadow-sm sticky top-[88px] z-30">
-        <div className="max-w-7xl mx-auto px-4 flex gap-1">
-          {[
-            { id: 'home', label: 'Home', icon: '🏠' },
-            { id: 'report', label: 'Report Item', icon: '📝' },
-            { id: 'browse', label: 'Browse', icon: '🔍' },
-            { id: 'matches', label: 'Matches', icon: '🧠' }
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-4 font-bold border-b-3 transition-all ${activeTab === tab.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}
-            >
-              <span className="mr-2">{tab.icon}</span>
+      <nav style={s.nav}>
+        <div style={s.navInner}>
+          {[{ id: 'home', label: 'Home' }, { id: 'report', label: 'Report' }, { id: 'browse', label: 'Browse' }, { id: 'matches', label: 'Matches' }].map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              style={{ ...s.navBtn, color: activeTab === tab.id ? '#1e3a5f' : '#7a8eaa', borderBottom: `2px solid ${activeTab === tab.id ? '#1e3a5f' : 'transparent'}`, fontWeight: activeTab === tab.id ? 600 : 500 }}>
               {tab.label}
             </button>
           ))}
         </div>
       </nav>
 
-      <main className="pb-16">
-        {activeTab === 'home' && <HomeTab />}
-        {activeTab === 'report' && <ReportTab />}
-        {activeTab === 'browse' && <BrowseTab />}
-        {activeTab === 'matches' && <MatchesTab />}
+      <main style={s.main}>
+        <div className="tab-fade" key={activeTab}>
+          {activeTab === 'home' && <HomeTab stats={stats} activeCTA={activeCTA} setActiveCTA={setActiveCTA} setFormData={setFormData} setActiveTab={setActiveTab} />}
+          {activeTab === 'report' && <ReportTab formData={formData} setFormData={setFormData} formErrors={formErrors} setFormErrors={setFormErrors} previewUrl={previewUrl} setPreviewUrl={setPreviewUrl} loading={loading} handleSubmit={handleSubmit} getLocation={getLocation} showNotification={showNotification} />}
+          {activeTab === 'browse' && <BrowseTab items={items} loading={loading} filterType={filterType} setFilterType={setFilterType} searchQuery={searchQuery} setSearchQuery={setSearchQuery} setActiveTab={setActiveTab} />}
+          {activeTab === 'matches' && <MatchesTab matches={matches} loading={loading} setActiveTab={setActiveTab} />}
+        </div>
       </main>
 
-      <footer className="bg-gray-900 text-white py-12">
-        <div className="max-w-7xl mx-auto px-4 text-center">
-          <p className="text-3xl font-bold mb-3">Findora</p>
-          <p className="text-gray-400 text-lg mb-6">AI-Powered Lost & Found Platform</p>
-          <p className="text-gray-500 mb-4">Advanced Computer Vision • Natural Language Processing • Smart Matching</p>
-          <div className="flex flex-wrap justify-center gap-8 text-sm text-gray-400 border-t border-gray-800 pt-8">
-            <span>✨ AI-Powered</span>
-            <span>🔒 Secure</span>
-            <span>⚡ Fast</span>
-            <span>🎯 Accurate</span>
+      <footer style={s.footer}>
+        <div style={s.footerInner}>
+          <div style={s.footerBrand}>
+            <div style={s.footerLogoMark}><Search size={14} color="#ffffff" strokeWidth={2} /></div>
+            <p style={s.footerName}>Findora</p>
           </div>
+          <p style={s.footerTagline}>Intelligent Lost &amp; Found — Powered by AI</p>
+          <div style={s.footerPillRow}>
+            <span style={s.footerPill}><Zap size={11} color="#7a9bbf" strokeWidth={1.5} style={{ marginRight: 5 }} />CNN Vision Encoder</span>
+            <span style={s.footerPill}><Search size={11} color="#7a9bbf" strokeWidth={1.5} style={{ marginRight: 5 }} />Semantic Text Matching</span>
+            <span style={s.footerPill}><Shield size={11} color="#7a9bbf" strokeWidth={1.5} style={{ marginRight: 5 }} />Secure &amp; Private</span>
+          </div>
+          <div style={s.footerDivider} />
+          <div style={s.footerContact}>
+            <div style={s.footerAuthor}>
+              <div style={s.footerAvatar}>DR</div>
+              <div>
+                <p style={s.footerAuthorName}>Deepak Roshan A</p>
+                <p style={s.footerAuthorRole}>AI Engineer</p>
+              </div>
+            </div>
+            <a href="mailto:deepakroshan380@gmail.com" style={s.footerEmail}>
+              deepakroshan380@gmail.com
+            </a>
+          </div>
+          <p style={s.footerCopy}>© {new Date().getFullYear()} Findora. All rights reserved.</p>
         </div>
       </footer>
     </div>
   );
+};
+
+// ─── Styles ────────────────────────────────────────────────────────────────────
+const s = {
+  root: { fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#f0f2f5', color: '#0f172a' },
+
+  header: { background: '#ffffff', borderBottom: '1px solid #dde3ed', position: 'sticky', top: 0, zIndex: 50 },
+  headerInner: { maxWidth: 960, margin: '0 auto', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  logo: { display: 'flex', alignItems: 'center', gap: 10 },
+  logoMark: { width: 34, height: 34, borderRadius: 10, background: '#1e3a5f', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  logoName: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 17, color: '#0f172a', lineHeight: 1.1 },
+  logoTag: { fontSize: 9, color: '#7a8eaa', letterSpacing: '0.09em', textTransform: 'uppercase' },
+  bellBtn: { position: 'relative', width: 34, height: 34, borderRadius: 8, background: '#eef1f7', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer' },
+  bellDot: { position: 'absolute', top: 6, right: 6, width: 7, height: 7, background: '#e05252', borderRadius: '50%', border: '1.5px solid #fff' },
+
+  nav: { background: '#ffffff', borderBottom: '1px solid #dde3ed', position: 'sticky', top: 54, zIndex: 40 },
+  navInner: { maxWidth: 960, margin: '0 auto', padding: '0 20px', display: 'flex' },
+  navBtn: { padding: '12px 18px', fontSize: 13, letterSpacing: '0.01em', transition: 'color 0.2s', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' },
+
+  main: { maxWidth: 960, margin: '0 auto', padding: '0 20px 60px' },
+  page: { paddingTop: 32 },
+  pageHeader: { marginBottom: 24 },
+  pageTitle: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 'clamp(22px, 5vw, 32px)', color: '#0f172a', marginTop: 4, lineHeight: 1.1 },
+  pageSub: { fontSize: 13, color: '#5c718a', marginTop: 6, lineHeight: 1.65 },
+
+  hero: { textAlign: 'center', padding: '36px 0 28px' },
+  heroEyebrow: { fontSize: 10, fontWeight: 700, color: '#7a8eaa', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 },
+  heroTitle: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 'clamp(40px, 10vw, 68px)', color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em' },
+  heroSub: { fontSize: 14, color: '#5c718a', marginTop: 12, lineHeight: 1.7, maxWidth: 400, margin: '12px auto 0' },
+
+  statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 18 },
+  statCard: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 11, padding: '13px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 },
+  statValue: { fontFamily: "'DM Serif Display', serif", fontSize: 24, color: '#1e3a5f', lineHeight: 1.1 },
+  statLabel: { fontSize: 10, color: '#7a8eaa', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' },
+
+  ctaGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginBottom: 22 },
+  ctaCard: { display: 'flex', alignItems: 'center', gap: 13, padding: '18px 16px', borderRadius: 13, cursor: 'pointer', textAlign: 'left', border: '1.5px solid #c5d0e0', transition: 'background 0.22s ease, border-color 0.22s ease', width: '100%' },
+  ctaIconBox: { width: 38, height: 38, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'background 0.22s ease' },
+  ctaTitle: { fontSize: 14, fontWeight: 700, marginBottom: 3 },
+  ctaSub: { fontSize: 12, lineHeight: 1.45 },
+
+  howSection: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 13, padding: '22px 20px', marginBottom: 18 },
+  sectionLabel: { fontSize: 10, fontWeight: 700, color: '#7a8eaa', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 18 },
+  howRow: { display: 'flex', alignItems: 'flex-start', gap: 15, marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #eef1f7' },
+  howStep: { fontFamily: "'DM Serif Display', serif", fontSize: 26, color: '#dde3ed', lineHeight: 1, flexShrink: 0, width: 38 },
+  howTitle: { fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 3 },
+  howDesc: { fontSize: 13, color: '#5c718a', lineHeight: 1.55 },
+
+  badges: { display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 8 },
+  badge: { fontSize: 12, color: '#4a6080', background: '#eef1f7', borderRadius: 20, padding: '5px 12px', fontWeight: 500 },
+
+  toggle: { display: 'flex', background: '#eef1f7', borderRadius: 9, padding: 3, marginBottom: 22, gap: 3 },
+  toggleBtn: { flex: 1, padding: '10px', borderRadius: 7, fontSize: 13, fontWeight: 500, transition: 'background 0.22s, color 0.22s', border: 'none', cursor: 'pointer', fontFamily: 'inherit' },
+  formStack: { display: 'flex', flexDirection: 'column', gap: 18 },
+  formGroup: { display: 'flex', flexDirection: 'column', gap: 5 },
+  label: { fontSize: 12, fontWeight: 600, color: '#2d4460', letterSpacing: '0.01em' },
+  req: { color: '#e05252', marginLeft: 2 },
+  optional: { fontWeight: 400, color: '#7a8eaa', fontSize: 11 },
+  input: { width: '100%', border: '1px solid #dde3ed', borderRadius: 9, padding: '10px 13px', fontSize: 13, color: '#0f172a', background: '#ffffff', transition: 'border 0.15s, box-shadow 0.15s' },
+  inputError: { borderColor: '#fca5a5', background: '#fff5f5' },
+  textarea: { resize: 'vertical', minHeight: 96, lineHeight: 1.6 },
+  charRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  charCount: { fontSize: 11, color: '#9aafc4' },
+  locationRow: { display: 'flex', gap: 8 },
+  gpsBtn: { flexShrink: 0, width: 42, height: 42, background: '#1e3a5f', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer' },
+  gpsConfirm: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#1a4d33', fontWeight: 500, marginTop: 4 },
+  rewardWrap: { position: 'relative' },
+  currencySymbol: { position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: '#9aafc4' },
+  uploadZone: { border: '1.5px dashed #c2cfe0', borderRadius: 11, padding: 26, textAlign: 'center', background: '#f8fafc', transition: 'border 0.15s' },
+  uploadZoneError: { borderColor: '#fca5a5', background: '#fff5f5' },
+  uploadLabel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, cursor: 'pointer' },
+  uploadText: { fontSize: 13, fontWeight: 500, color: '#2d4460' },
+  uploadHint: { fontSize: 11, color: '#9aafc4' },
+  previewWrap: { position: 'relative', display: 'inline-block' },
+  previewImg: { maxHeight: 200, borderRadius: 8, objectFit: 'contain' },
+  removeBtn: { position: 'absolute', top: -8, right: -8, width: 26, height: 26, background: '#e05252', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: 'none' },
+  fieldError: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#e05252', fontWeight: 500 },
+  submitBtn: { width: '100%', padding: '13px', borderRadius: 11, fontSize: 14, fontWeight: 600, color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4, border: 'none', transition: 'opacity 0.15s' },
+
+  searchRow: { display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
+  searchWrap: { position: 'relative', flex: 1, minWidth: 200 },
+  searchIcon: { position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)' },
+  searchInput: { width: '100%', border: '1px solid #dde3ed', borderRadius: 9, padding: '10px 13px 10px 33px', fontSize: 13, color: '#0f172a', background: '#ffffff' },
+  filterRow: { display: 'flex', gap: 6 },
+  filterBtn: { padding: '9px 15px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: '1px solid', transition: 'all 0.18s', cursor: 'pointer', fontFamily: 'inherit' },
+  resultCount: { fontSize: 12, color: '#7a8eaa', marginBottom: 12, fontWeight: 500 },
+  cardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 },
+  itemCard: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 13, overflow: 'hidden' },
+  itemImageWrap: { position: 'relative', height: 170, background: '#eef1f7' },
+  itemImage: { width: '100%', height: '100%', objectFit: 'cover' },
+  itemImagePlaceholder: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  typeBadge: { position: 'absolute', top: 9, right: 9, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', padding: '3px 8px', borderRadius: 5 },
+  itemBody: { padding: '13px 15px' },
+  itemTitle: { fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 5 },
+  itemDesc: { fontSize: 12.5, color: '#5c718a', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: 9 },
+  itemMeta: { display: 'flex', flexDirection: 'column', gap: 4 },
+  itemMetaRow: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: '#7a8eaa' },
+  rewardBadge: { marginTop: 9, fontSize: 12, color: '#1a4d33', background: '#e8f2ec', border: '1px solid #a7d4b8', borderRadius: 6, padding: '4px 10px', fontWeight: 600, display: 'inline-block' },
+
+  matchGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 },
+  matchCard: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 13, padding: '18px' },
+  matchHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  matchLabel: { fontSize: 12.5, fontWeight: 600, color: '#2d4460' },
+  matchScore: { fontSize: 22, fontFamily: "'DM Serif Display', serif" },
+  matchSource: { background: '#f0f2f5', borderRadius: 9, padding: '11px', marginBottom: 12 },
+  matchSourceLabel: { fontSize: 9, fontWeight: 700, color: '#7a8eaa', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 4 },
+  matchSourceTitle: { fontSize: 13.5, fontWeight: 600, color: '#0f172a', marginBottom: 3 },
+  matchSourceDesc: { fontSize: 12, color: '#5c718a', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' },
+  matchBarWrap: { marginBottom: 7 },
+  matchBarTrack: { height: 5, background: '#eef1f7', borderRadius: 4, overflow: 'hidden' },
+  matchBarFill: { height: '100%', borderRadius: 4, transition: 'width 0.6s ease' },
+  matchConfidenceLabel: { fontSize: 12, color: '#5c718a', fontWeight: 500 },
+
+  loadingState: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '60px 0' },
+  loadingText: { fontSize: 13, color: '#7a8eaa' },
+  emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '60px 20px', gap: 10 },
+  emptyTitle: { fontSize: 15, fontWeight: 600, color: '#2d4460' },
+  emptyDesc: { fontSize: 13, color: '#7a8eaa', lineHeight: 1.6 },
+  emptyBtn: { marginTop: 8, padding: '10px 22px', background: '#1e3a5f', color: '#fff', borderRadius: 9, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: 'none' },
+
+  notification: { position: 'fixed', top: 14, right: 14, zIndex: 999, color: '#fff', padding: '10px 16px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 500, animation: 'slideDown 0.25s ease', maxWidth: 320 },
+
+  footer: { background: '#1e3a5f', marginTop: 20 },
+  footerInner: { maxWidth: 960, margin: '0 auto', padding: '40px 20px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 },
+  footerBrand: { display: 'flex', alignItems: 'center', gap: 10 },
+  footerLogoMark: { width: 32, height: 32, borderRadius: 9, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.16)', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  footerName: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 22, color: '#ffffff', lineHeight: 1 },
+  footerTagline: { fontSize: 13, color: '#94b8d4', letterSpacing: '0.02em', textAlign: 'center' },
+  footerPillRow: { display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16, width: '100%' },
+  footerPill: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: '#7a9bbf', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: '5px 12px', fontWeight: 500 },
+  footerDivider: { width: '100%', borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: 2 },
+  footerContact: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', flexWrap: 'wrap', gap: 12, paddingTop: 4 },
+  footerAuthor: { display: 'flex', alignItems: 'center', gap: 10 },
+  footerAvatar: { width: 36, height: 36, borderRadius: '50%', background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, color: '#ffffff', letterSpacing: '0.04em', flexShrink: 0 },
+  footerAuthorName: { fontSize: 13, fontWeight: 600, color: '#ffffff', marginBottom: 2 },
+  footerAuthorRole: { fontSize: 11, color: '#7a9bbf', letterSpacing: '0.04em' },
+  footerEmail: { fontSize: 12, color: '#94b8d4', textDecoration: 'none', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: '6px 14px', fontWeight: 500 },
+  footerCopy: { fontSize: 11, color: '#4a6a8a', marginTop: 2, textAlign: 'center' },
 };
 
 export default FindoraApp;

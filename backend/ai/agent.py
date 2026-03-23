@@ -1,6 +1,6 @@
 """
 FINDORA - Autonomous AI Agent
-Continuously monitors and matches items automatically
+Monitors items, finds matches, sends real email notifications.
 """
 
 import asyncio
@@ -14,52 +14,41 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from database import db
 from ai.engine import get_ai_engine
-
+from notifications import notify_match
 
 # ================= CONFIG =================
-EMAIL_CONFIDENCE_THRESHOLD = 0.80  # 80%
+MATCH_THRESHOLD      = 0.60   # store in DB
+NOTIFY_THRESHOLD     = 0.80   # send email
 # ==========================================
 
 
 class FindoraAgent:
-    """
-    Autonomous AI Agent for Findora
-    - Monitors new items
-    - Extracts features
-    - Finds matches
-    - Stores matches
-    - Sends notifications (confidence-aware)
-    """
 
-    def __init__(self, match_threshold: float = 0.6, check_interval: int = 30):
-        self.ai_engine = get_ai_engine()
+    def __init__(self, match_threshold: float = MATCH_THRESHOLD, check_interval: int = 30):
+        self.ai_engine       = get_ai_engine()
         self.match_threshold = match_threshold
-        self.check_interval = check_interval
-        self.is_running = False
+        self.check_interval  = check_interval
+        self.is_running      = False
 
         print("=" * 60)
         print("🤖 FINDORA AUTONOMOUS AI AGENT")
         print("=" * 60)
-        print(f"   Match Threshold: {match_threshold}")
-        print(f"   Email Threshold: {EMAIL_CONFIDENCE_THRESHOLD}")
-        print(f"   Check Interval: {check_interval}s")
+        print(f"   Match Threshold  : {match_threshold} (store in DB)")
+        print(f"   Notify Threshold : {NOTIFY_THRESHOLD} (send email)")
+        print(f"   Check Interval   : {check_interval}s")
         print("=" * 60)
 
-    # --------------------------------------------------
     async def observe_new_items(self) -> List[Dict]:
-        """Get items that need feature extraction"""
         try:
             return db.get_items_without_features(limit=50)
         except Exception as e:
             print(f"Error observing items: {e}")
             return []
 
-    # --------------------------------------------------
     async def extract_features(self, item: Dict) -> bool:
-        """Extract and store AI features"""
         try:
             item_id = item["item_id"]
-            print(f"🔍 Extracting features: {item['title']} ({item_id})")
+            print(f"🔍 Extracting features: {item['title']} ({item_id[:8]}...)")
 
             image_features = None
             if item.get("image_path"):
@@ -86,15 +75,12 @@ class FindoraAgent:
             print(f"Error extracting features: {e}")
             return False
 
-    # --------------------------------------------------
     async def find_matches(self, item: Dict) -> List[Dict]:
-        """Find matches using AI engine"""
         try:
             opposite_type = "found" if item["item_type"] == "lost" else "lost"
             candidates = db.get_all_items(
                 item_type=opposite_type, status="active", limit=100
             )
-
             candidates = [
                 c for c in candidates
                 if c.get("image_features") and c.get("text_embedding")
@@ -103,7 +89,7 @@ class FindoraAgent:
             if not candidates:
                 return []
 
-            print(f"🔎 Comparing against {len(candidates)} {opposite_type} items...")
+            print(f"🔎 Comparing against {len(candidates)} {opposite_type} item(s)...")
 
             return self.ai_engine.batch_match(
                 query_item=item,
@@ -116,61 +102,27 @@ class FindoraAgent:
             print(f"Error finding matches: {e}")
             return []
 
-    # --------------------------------------------------
     async def store_match(self, lost_id: str, found_id: str, scores: Dict):
-        """Store match in DB"""
         try:
             match_id = str(uuid.uuid4())
-            now = datetime.utcnow().isoformat()
-
+            now      = datetime.utcnow().isoformat()
             db.insert_match({
-                "match_id": match_id,
-                "lost_item_id": lost_id,
-                "found_item_id": found_id,
+                "match_id":         match_id,
+                "lost_item_id":     lost_id,
+                "found_item_id":    found_id,
                 "confidence_score": scores["confidence_score"],
                 "image_similarity": scores["image_similarity"],
-                "text_similarity": scores["text_similarity"],
-                "location_score": scores["location_score"],
-                "status": "pending",
-                "created_at": now,
-                "updated_at": now,
+                "text_similarity":  scores["text_similarity"],
+                "location_score":   scores["location_score"],
+                "status":           "pending",
+                "created_at":       now,
+                "updated_at":       now,
             })
-
-            print(f"   💾 Match stored: {match_id}")
-
+            print(f"   💾 Match stored: {match_id[:8]}...")
         except Exception as e:
             print(f"Error storing match: {e}")
 
-    # --------------------------------------------------
-    async def notify_users(self, match: Dict, lost_item: Dict, found_item: Dict):
-        """
-        Notify users ONLY if confidence >= 80%
-        """
-        try:
-            confidence = match["confidence_score"]
-
-            if confidence < EMAIL_CONFIDENCE_THRESHOLD:
-                print(
-                    f"   📭 Notification skipped "
-                    f"({confidence*100:.1f}% < 80%)"
-                )
-                return
-
-            print("   📧 MATCH NOTIFICATION (EMAIL SENT)")
-            print(f"      Lost: {lost_item['title']}")
-            print(f"      Found: {found_item['title']}")
-            print(f"      Confidence: {confidence*100:.1f}%")
-            print(f"      Lost Contact: {lost_item['contact_info']}")
-            print(f"      Found Contact: {found_item['contact_info']}")
-
-            # 👉 SMTP / SendGrid / SMS hook goes here later
-
-        except Exception as e:
-            print(f"Error sending notification: {e}")
-
-    # --------------------------------------------------
     async def process_item(self, item: Dict):
-        """Process single item"""
         try:
             item_id = item["item_id"]
 
@@ -187,10 +139,11 @@ class FindoraAgent:
                 print("   ℹ️  No matches found")
                 return
 
-            print(f"   ✨ Found {len(matches)} matches!")
+            print(f"   ✨ Found {len(matches)} match(es)!")
 
             for match in matches:
                 matched_item = match["item"]
+                confidence   = match["confidence_score"]
 
                 if item["item_type"] == "lost":
                     lost_item, found_item = item, matched_item
@@ -198,27 +151,31 @@ class FindoraAgent:
                     lost_item, found_item = matched_item, item
 
                 scores = {
-                    "confidence_score": match["confidence_score"],
+                    "confidence_score": confidence,
                     "image_similarity": match["image_similarity"],
-                    "text_similarity": match["text_similarity"],
-                    "location_score": match["location_score"],
+                    "text_similarity":  match["text_similarity"],
+                    "location_score":   match["location_score"],
                 }
 
                 await self.store_match(
                     lost_item["item_id"],
                     found_item["item_id"],
-                    scores,
+                    scores
                 )
 
-                await self.notify_users(match, lost_item, found_item)
+                # ── REAL EMAIL NOTIFICATION ──────────────────
+                if confidence >= NOTIFY_THRESHOLD:
+                    print(f"   🎯 {round(confidence*100)}% confidence — sending emails!")
+                    notify_match(lost_item, found_item, confidence)
+                else:
+                    print(f"   📊 {round(confidence*100)}% — below {round(NOTIFY_THRESHOLD*100)}% notify threshold")
 
         except Exception as e:
             print(f"Error processing item: {e}")
 
-    # --------------------------------------------------
     async def run_cycle(self):
         print("\n" + "=" * 60)
-        print(f"🔄 Agent Cycle - {datetime.now().strftime('%H:%M:%S')}")
+        print(f"🔄 Agent Cycle — {datetime.now().strftime('%H:%M:%S')}")
         print("=" * 60)
 
         items = await self.observe_new_items()
@@ -227,17 +184,16 @@ class FindoraAgent:
             print("   ℹ️  No new items to process")
             return
 
-        print(f"   📋 Processing {len(items)} items...")
+        print(f"   📋 Processing {len(items)} item(s)...")
 
         for i, item in enumerate(items, 1):
             print(f"\n   [{i}/{len(items)}] {item['title']}")
             await self.process_item(item)
 
         print("\n" + "=" * 60)
-        print("✅ Cycle completed")
+        print("✅ Cycle complete")
         print("=" * 60)
 
-    # --------------------------------------------------
     async def start(self):
         self.is_running = True
         print("\n🚀 Agent started!")
@@ -255,7 +211,7 @@ class FindoraAgent:
 
 
 async def run_agent():
-    agent = FindoraAgent(match_threshold=0.6, check_interval=30)
+    agent = FindoraAgent(match_threshold=MATCH_THRESHOLD, check_interval=30)
     await agent.start()
 
 
