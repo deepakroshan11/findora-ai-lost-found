@@ -1,7 +1,7 @@
 """
 FINDORA - Notification Engine
 Uses Gmail SMTP — sends to ANY email worldwide, free forever.
-Emails arrive from: Findora <your-gmail@gmail.com>
+Handles contact_info format: "email" or "email | phone"
 """
 
 import os
@@ -11,26 +11,56 @@ import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Tuple, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ─── Gmail SMTP credentials (set in backend/.env) ─────────────────────
 GMAIL_ADDRESS  = os.getenv("GMAIL_ADDRESS", "")
 GMAIL_APP_PASS = os.getenv("GMAIL_APP_PASSWORD", "")
 FROM_NAME      = os.getenv("FROM_NAME", "Findora")
+ENABLED        = bool(GMAIL_ADDRESS and GMAIL_APP_PASS)
 
-ENABLED = bool(GMAIL_ADDRESS and GMAIL_APP_PASS)
+
+# ─── Parse contact_info → (email, phone|None) ─────────────────────────
+def parse_contact(contact_info: str) -> Tuple[str, Optional[str]]:
+    """
+    Parses contact_info stored as:
+      "user@email.com"              → ("user@email.com", None)
+      "user@email.com | +91 98765"  → ("user@email.com", "+91 98765")
+    """
+    parts = [p.strip() for p in contact_info.split("|")]
+    email = parts[0] if parts else ""
+    phone = parts[1] if len(parts) > 1 and parts[1] else None
+    return email, phone
 
 
-# ─── Contact detection ────────────────────────────────────────────────
-def is_email(contact: str) -> bool:
-    return bool(re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+", contact.strip()))
+def is_valid_email(s: str) -> bool:
+    return bool(re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+", s.strip()))
 
-def is_phone(contact: str) -> bool:
-    digits = re.sub(r"\D", "", contact)
-    return 7 <= len(digits) <= 15
+
+# ─── Build contact box HTML (shows email + phone if available) ────────
+def build_contact_box(other_label: str, contact_info: str) -> str:
+    email, phone = parse_contact(contact_info)
+    phone_row = ""
+    if phone:
+        phone_row = f"""
+    <tr><td style="padding:6px 0 0;">
+      <p style="margin:0 0 2px;font-size:9px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;">Mobile</p>
+      <p style="margin:0;font-size:14px;font-weight:600;color:#fff;">{phone}</p>
+    </td></tr>"""
+
+    return f"""
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
+  <tr><td style="background:#1e3a5f;border-radius:9px;padding:13px 15px;">
+    <p style="margin:0 0 6px;font-size:9px;font-weight:700;color:rgba(255,255,255,.55);letter-spacing:.1em;text-transform:uppercase;">Contact the {other_label} Person</p>
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr><td style="padding-bottom:{'6px' if phone else '0'};">
+        <p style="margin:0 0 2px;font-size:9px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;">Email</p>
+        <p style="margin:0;font-size:14px;font-weight:600;color:#fff;">{email}</p>
+      </td></tr>{phone_row}
+    </table>
+  </td></tr></table>"""
 
 
 # ─── HTML email template ──────────────────────────────────────────────
@@ -45,6 +75,8 @@ def build_html(recipient_role, recipient_item, matched_item, confidence):
 
     def trunc(t, n=120):
         return (t[:n] + "...") if len(t) > n else t
+
+    contact_box = build_contact_box(other_label, matched_item.get("contact_info", "—"))
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -99,11 +131,7 @@ def build_html(recipient_role, recipient_item, matched_item, confidence):
     </table>
   </td></tr></table>
 
-  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
-  <tr><td style="background:#1e3a5f;border-radius:9px;padding:13px 15px;">
-    <p style="margin:0 0 4px;font-size:9px;font-weight:700;color:rgba(255,255,255,.55);letter-spacing:.1em;text-transform:uppercase;">Contact the {other_label} Person</p>
-    <p style="margin:0;font-size:15px;font-weight:600;color:#fff;">{matched_item.get('contact_info','—')}</p>
-  </td></tr></table>
+  {contact_box}
 
   <p style="margin:0;font-size:12px;color:#7a8eaa;line-height:1.65;">Reach out directly to confirm. If this is not your item, ignore this email.</p>
 </td></tr>
@@ -120,9 +148,11 @@ def build_html(recipient_role, recipient_item, matched_item, confidence):
 
 
 def build_text(recipient_role, recipient_item, matched_item, confidence):
-    pct = round(confidence * 100, 1)
-    rl  = "Lost"  if recipient_role == "lost" else "Found"
-    ol  = "Found" if recipient_role == "lost" else "Lost"
+    pct   = round(confidence * 100, 1)
+    rl    = "Lost"  if recipient_role == "lost" else "Found"
+    ol    = "Found" if recipient_role == "lost" else "Lost"
+    email, phone = parse_contact(matched_item.get("contact_info", ""))
+    phone_line = f"Mobile : {phone}" if phone else ""
     return f"""FINDORA — AI Match Alert ({pct}%)
 
 Your {rl} item '{recipient_item.get('title')}' may have been matched.
@@ -136,7 +166,8 @@ MATCHED {ol.upper()} ITEM: {matched_item.get('title')}
 Location: {matched_item.get('location','')}
 
 CONTACT THE {ol.upper()} PERSON:
-{matched_item.get('contact_info','—')}
+Email  : {email}
+{phone_line}
 
 — Findora AI Lost & Found
 """
@@ -173,60 +204,29 @@ def send_email(to_address, recipient_role, recipient_item, matched_item, confide
         return False
 
 
-# ─── SMS via Twilio (optional) ────────────────────────────────────────
-def send_sms(to_number, recipient_role, recipient_item, matched_item, confidence):
-    sid   = os.getenv("TWILIO_ACCOUNT_SID", "")
-    token = os.getenv("TWILIO_AUTH_TOKEN", "")
-    frm   = os.getenv("TWILIO_FROM_NUMBER", "")
-    if not all([sid, token, frm]):
-        print(f"   ⚠️  Twilio not configured — skipping SMS")
-        return False
-    try:
-        from twilio.rest import Client
-        pct  = round(confidence * 100, 1)
-        rl   = "lost"  if recipient_role == "lost" else "found"
-        ol   = "found" if recipient_role == "lost" else "lost"
-        body = (f"Findora: Your {rl} item '{recipient_item.get('title')}' "
-                f"has a {pct}% match with '{matched_item.get('title')}'. "
-                f"Contact: {matched_item.get('contact_info','—')}")
-        digits = re.sub(r"\D", "", to_number)
-        if not digits.startswith("91") and len(digits) == 10:
-            digits = "91" + digits
-        msg = Client(sid, token).messages.create(body=body, from_=frm, to="+"+digits)
-        print(f"   📱 SMS sent → +{digits} ({msg.sid})")
-        return True
-    except Exception as e:
-        print(f"   ❌ SMS error: {e}")
-        return False
-
-
-# ─── Smart notify ─────────────────────────────────────────────────────
-def notify_user(contact, recipient_role, recipient_item, matched_item, confidence):
-    contact = contact.strip()
-    if is_email(contact):
-        return send_email(contact, recipient_role, recipient_item, matched_item, confidence)
-    elif is_phone(contact):
-        return send_sms(contact, recipient_role, recipient_item, matched_item, confidence)
-    else:
-        print(f"   ⚠️  Unrecognised contact: {contact}")
-        return False
-
-
 # ─── Main entry — called by agent ────────────────────────────────────
 def notify_match(lost_item: Dict, found_item: Dict, confidence: float):
     print(f"\n   📣 Notifying users ({round(confidence*100)}% match)...")
 
-    lc = lost_item.get("contact_info",  "").strip()
+    lc = lost_item.get("contact_info", "").strip()
     fc = found_item.get("contact_info", "").strip()
 
     if lc:
-        print(f"   → Lost user  : {lc}")
-        notify_user(lc, "lost",  lost_item,  found_item, confidence)
+        lost_email, _ = parse_contact(lc)
+        if is_valid_email(lost_email):
+            print(f"   → Lost user  : {lost_email}")
+            send_email(lost_email, "lost", lost_item, found_item, confidence)
+        else:
+            print(f"   ⚠️  Invalid lost email: {lost_email}")
     else:
         print("   ⚠️  Lost item has no contact info")
 
     if fc:
-        print(f"   → Found user : {fc}")
-        notify_user(fc, "found", found_item, lost_item,  confidence)
+        found_email, _ = parse_contact(fc)
+        if is_valid_email(found_email):
+            print(f"   → Found user : {found_email}")
+            send_email(found_email, "found", found_item, lost_item, confidence)
+        else:
+            print(f"   ⚠️  Invalid found email: {found_email}")
     else:
         print("   ⚠️  Found item has no contact info")

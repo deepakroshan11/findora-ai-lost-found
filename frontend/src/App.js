@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp, Clock, Sparkles, Shield, Zap } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp, Clock, Sparkles, Shield, Zap, Activity } from 'lucide-react';
 
 const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
-// ─── Shared Components (outside FindoraApp — never re-created on state change) ─
 const FieldError = ({ msg }) => msg ? (
   <p style={s.fieldError}><AlertCircle size={13} />{msg}</p>
 ) : null;
@@ -11,6 +10,89 @@ const FieldError = ({ msg }) => msg ? (
 const Spinner = ({ size = 20, color = '#ffffff' }) => (
   <div style={{ width: size, height: size, border: `2px solid rgba(255,255,255,0.25)`, borderTopColor: color, borderRadius: '50%', animation: 'spin 0.75s linear infinite' }} />
 );
+
+// ─── AI Agent Status Section ──────────────────────────────────────────────────
+const AgentStatusSection = () => {
+  const [step, setStep] = useState(0);
+  const [scanPct, setScanPct] = useState(0);
+  const steps = [
+    { label: 'Extracting image features', sub: 'MobileNetV3 · CNN Vision Encoder', done: true },
+    { label: 'Computing text embeddings', sub: 'all-MiniLM-L6-v2 · 384-dim vector', done: true },
+    { label: 'Scanning for matches...', sub: 'Comparing against all active items', done: false },
+  ];
+
+  useEffect(() => {
+    const t1 = setInterval(() => {
+      setScanPct(p => { if (p >= 100) { return 0; } return p + 2; });
+    }, 60);
+    const t2 = setInterval(() => {
+      setStep(s => (s + 1) % 4);
+    }, 1800);
+    return () => { clearInterval(t1); clearInterval(t2); };
+  }, []);
+
+  return (
+    <div style={s.agentSection}>
+      <p style={s.sectionLabel}>AI Agent — Running</p>
+
+      <div style={s.agentHeader}>
+        <div style={s.agentDotWrap}>
+          <div style={s.agentDot} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <p style={s.agentTitle}>Autonomous matching agent active</p>
+          <p style={s.agentSub}>Scans all items every 30 seconds · Notifies users via email when match ≥ 80%</p>
+        </div>
+        <span style={s.agentBadge}>Live</span>
+      </div>
+
+      <div style={s.agentEngines}>
+        {[
+          { label: 'CNN Vision', sub: 'Image features' },
+          { label: 'NLP Text', sub: 'Semantic match' },
+          { label: 'GPS Score', sub: 'Location weight' },
+        ].map((e, i) => (
+          <div key={i} style={s.enginePill}>
+            <p style={s.engineLabel}>{e.label}</p>
+            <p style={s.engineSub}>{e.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      <div style={s.agentSteps}>
+        {steps.map((st, i) => (
+          <div key={i} style={{ ...s.agentStep, background: st.done ? '#e8f2ec' : '#eef1f7', border: `1px solid ${st.done ? '#b8ddc8' : '#dde3ed'}` }}>
+            <div style={{ ...s.agentStepIcon, background: st.done ? '#1a4d33' : '#1e3a5f', animation: !st.done ? 'pulse 1.4s ease-in-out infinite' : 'none' }}>
+              {st.done
+                ? <Check size={10} color="#fff" strokeWidth={2.5} />
+                : <Activity size={10} color="#fff" strokeWidth={2} />}
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ ...s.agentStepLabel, color: st.done ? '#1a4d33' : '#0f172a' }}>{st.label}</p>
+              {!st.done && (
+                <div style={s.scanBarTrack}>
+                  <div style={{ ...s.scanBarFill, width: `${scanPct}%` }} />
+                </div>
+              )}
+              {st.done && <p style={s.agentStepSub}>{st.sub}</p>}
+            </div>
+            <span style={{ fontSize: 10, color: st.done ? '#1a4d33' : '#7a8eaa', fontWeight: 600 }}>{st.done ? 'done' : 'active'}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={s.agentNotifyBar}>
+        <div style={s.agentNotifyIcon}>
+          <Check size={13} color="#fff" strokeWidth={2.5} />
+        </div>
+        <div>
+          <p style={s.agentNotifyTitle}>Match found → both users notified instantly</p>
+          <p style={s.agentNotifySub}>Email sent automatically with contact details of the other party</p>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ─── Home Tab ─────────────────────────────────────────────────────────────────
 const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) => (
@@ -51,7 +133,6 @@ const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) 
           <p style={{ ...s.ctaSub, color: activeCTA === 'lost' ? 'rgba(255,255,255,0.72)' : '#5c718a' }}>Report &amp; let AI search for you</p>
         </div>
       </button>
-
       <button
         style={{ ...s.ctaCard, background: activeCTA === 'found' ? '#1a4d33' : '#ffffff', borderColor: activeCTA === 'found' ? '#1a4d33' : '#c5d0e0' }}
         onClick={() => { setActiveCTA('found'); setFormData(f => ({ ...f, itemType: 'found' })); setTimeout(() => setActiveTab('report'), 200); }}
@@ -80,6 +161,8 @@ const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) 
       ))}
     </div>
 
+    <AgentStatusSection />
+
     <div style={s.badges}>
       {['AI-Powered Matching', 'Secure & Private', 'Fast Results'].map(b => (
         <span key={b} style={s.badge}>{b}</span>
@@ -107,7 +190,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
     </div>
 
     <div style={s.formStack}>
-      {/* Photo */}
       <div style={s.formGroup}>
         <label style={s.label}>Photo <span style={s.req}>*</span></label>
         <div style={{ ...s.uploadZone, ...(formErrors.image ? s.uploadZoneError : {}) }}>
@@ -137,7 +219,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
         <FieldError msg={formErrors.image} />
       </div>
 
-      {/* Title */}
       <div style={s.formGroup}>
         <label style={s.label}>Item Title <span style={s.req}>*</span></label>
         <input type="text" value={formData.title} placeholder="e.g. Black leather wallet"
@@ -146,7 +227,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
         <FieldError msg={formErrors.title} />
       </div>
 
-      {/* Category */}
       <div style={s.formGroup}>
         <label style={s.label}>Category <span style={s.req}>*</span></label>
         <select value={formData.category} onChange={e => setFormData(f => ({ ...f, category: e.target.value }))} style={s.input}>
@@ -156,7 +236,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
         </select>
       </div>
 
-      {/* Description */}
       <div style={s.formGroup}>
         <label style={s.label}>Description <span style={s.req}>*</span></label>
         <textarea value={formData.description} rows={4}
@@ -169,7 +248,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
         </div>
       </div>
 
-      {/* Location */}
       <div style={s.formGroup}>
         <label style={s.label}>Location <span style={s.req}>*</span></label>
         <div style={s.locationRow}>
@@ -186,16 +264,29 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
         <FieldError msg={formErrors.location} />
       </div>
 
-      {/* Contact */}
-      <div style={s.formGroup}>
-        <label style={s.label}>Contact Info <span style={s.req}>*</span></label>
-        <input type="text" value={formData.contactInfo} placeholder="Email or phone number"
-          onChange={e => { setFormData(f => ({ ...f, contactInfo: e.target.value })); setFormErrors(fe => ({ ...fe, contactInfo: null })); }}
-          style={{ ...s.input, ...(formErrors.contactInfo ? s.inputError : {}) }} />
-        <FieldError msg={formErrors.contactInfo} />
+      {/* ─── Contact Section ─── */}
+      <div style={s.contactSection}>
+        <p style={s.contactSectionTitle}>Contact Information</p>
+        <p style={s.contactSectionSub}>When a match is found, we'll send the other person your contact details so they can reach you directly.</p>
+
+        <div style={{ ...s.formGroup, marginTop: 12 }}>
+          <label style={s.label}>Email Address <span style={s.req}>*</span></label>
+          <input type="email" value={formData.contactEmail} placeholder="yourname@email.com"
+            onChange={e => { setFormData(f => ({ ...f, contactEmail: e.target.value })); setFormErrors(fe => ({ ...fe, contactEmail: null })); }}
+            style={{ ...s.input, ...(formErrors.contactEmail ? s.inputError : {}) }} />
+          <p style={s.contactHint}>You'll receive match alerts at this email</p>
+          <FieldError msg={formErrors.contactEmail} />
+        </div>
+
+        <div style={{ ...s.formGroup, marginTop: 10 }}>
+          <label style={s.label}>Mobile Number <span style={s.optional}>(optional)</span></label>
+          <input type="tel" value={formData.contactPhone} placeholder="+91 98765 43210"
+            onChange={e => setFormData(f => ({ ...f, contactPhone: e.target.value }))}
+            style={s.input} />
+          <p style={s.contactHint}>If provided, shown in the match email for faster communication</p>
+        </div>
       </div>
 
-      {/* Reward */}
       {formData.itemType === 'lost' && (
         <div style={s.formGroup}>
           <label style={s.label}>Reward Amount <span style={s.optional}>(optional)</span></label>
@@ -208,7 +299,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
         </div>
       )}
 
-      {/* Submit */}
       <button onClick={handleSubmit} disabled={loading}
         style={{ ...s.submitBtn, background: formData.itemType === 'lost' ? '#1e3a5f' : '#1a4d33', opacity: loading ? 0.65 : 1, cursor: loading ? 'not-allowed' : 'pointer' }}>
         {loading ? <Spinner size={18} color="#fff" /> : `Submit ${formData.itemType === 'lost' ? 'Lost' : 'Found'} Report`}
@@ -224,7 +314,6 @@ const BrowseTab = ({ items, loading, filterType, setFilterType, searchQuery, set
     const matchesSearch = !searchQuery || [item.title, item.description, item.location].some(f => f?.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesType && matchesSearch;
   });
-
   return (
     <div style={s.page}>
       <div style={s.pageHeader}>
@@ -350,7 +439,8 @@ const FindoraApp = () => {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [formData, setFormData] = useState({
     title: '', description: '', category: 'wallet', location: '',
-    latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0, contactInfo: '', image: null
+    latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0,
+    contactEmail: '', contactPhone: '', image: null
   });
 
   useEffect(() => { if (!userId) autoRegisterUser(); }, [userId]);
@@ -405,7 +495,8 @@ const FindoraApp = () => {
     if (!formData.title.trim()) errors.title = 'Title is required';
     if (!formData.description.trim() || formData.description.length < 10) errors.description = 'Description must be at least 10 characters';
     if (!formData.location.trim()) errors.location = 'Location is required';
-    if (!formData.contactInfo.trim()) errors.contactInfo = 'Contact info is required';
+    if (!formData.contactEmail.trim()) errors.contactEmail = 'Email is required for match notifications';
+    if (formData.contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(formData.contactEmail)) errors.contactEmail = 'Enter a valid email address';
     if (!formData.image) errors.image = 'Photo is required';
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -415,17 +506,28 @@ const FindoraApp = () => {
     if (!validateForm()) { showNotification('Please fix the errors below', 'error'); return; }
     try {
       setLoading(true);
+      // Build contact_info: email + phone if provided
+      const contactInfo = formData.contactPhone.trim()
+        ? `${formData.contactEmail.trim()} | ${formData.contactPhone.trim()}`
+        : formData.contactEmail.trim();
+
       const data = new FormData();
-      data.append('title', formData.title.trim()); data.append('description', formData.description.trim());
-      data.append('category', formData.category); data.append('location', formData.location.trim());
-      data.append('item_type', formData.itemType); data.append('reward_amount', formData.rewardAmount);
-      data.append('contact_info', formData.contactInfo.trim()); data.append('user_id', userId); data.append('image', formData.image);
+      data.append('title', formData.title.trim());
+      data.append('description', formData.description.trim());
+      data.append('category', formData.category);
+      data.append('location', formData.location.trim());
+      data.append('item_type', formData.itemType);
+      data.append('reward_amount', formData.rewardAmount);
+      data.append('contact_info', contactInfo);
+      data.append('user_id', userId);
+      data.append('image', formData.image);
       if (formData.latitude) data.append('latitude', formData.latitude);
       if (formData.longitude) data.append('longitude', formData.longitude);
+
       const res = await fetch(`${API_BASE}/api/items/report`, { method: 'POST', body: data });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message || 'Submission failed'); }
       showNotification('Item reported. Scanning for matches...', 'success');
-      setFormData({ title: '', description: '', category: 'wallet', location: '', latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0, contactInfo: '', image: null });
+      setFormData({ title: '', description: '', category: 'wallet', location: '', latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0, contactEmail: '', contactPhone: '', image: null });
       setPreviewUrl(null); setFormErrors({});
       setTimeout(() => setActiveTab('browse'), 1800);
     } catch (err) { showNotification(err.message || 'Submission failed', 'error'); } finally { setLoading(false); }
@@ -448,8 +550,10 @@ const FindoraApp = () => {
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #f0f2f5 !important; -webkit-font-smoothing: antialiased; }
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.55;transform:scale(.8)} }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes scanBar { 0%{width:0%} 100%{width:100%} }
         .tab-fade { animation: fadeUp 0.28s ease both; }
         button { cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; }
         input, textarea, select { font-family: inherit; font-size: inherit; outline: none; color: #0f172a; background: #ffffff; }
@@ -522,9 +626,7 @@ const FindoraApp = () => {
                 <p style={s.footerAuthorRole}>AI Engineer</p>
               </div>
             </div>
-            <a href="mailto:deepakroshan380@gmail.com" style={s.footerEmail}>
-              deepakroshan380@gmail.com
-            </a>
+            <a href="mailto:deepakroshan380@gmail.com" style={s.footerEmail}>deepakroshan380@gmail.com</a>
           </div>
           <p style={s.footerCopy}>© {new Date().getFullYear()} Findora. All rights reserved.</p>
         </div>
@@ -533,10 +635,8 @@ const FindoraApp = () => {
   );
 };
 
-// ─── Styles ────────────────────────────────────────────────────────────────────
 const s = {
   root: { fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#f0f2f5', color: '#0f172a' },
-
   header: { background: '#ffffff', borderBottom: '1px solid #dde3ed', position: 'sticky', top: 0, zIndex: 50 },
   headerInner: { maxWidth: 960, margin: '0 auto', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   logo: { display: 'flex', alignItems: 'center', gap: 10 },
@@ -545,33 +645,27 @@ const s = {
   logoTag: { fontSize: 9, color: '#7a8eaa', letterSpacing: '0.09em', textTransform: 'uppercase' },
   bellBtn: { position: 'relative', width: 34, height: 34, borderRadius: 8, background: '#eef1f7', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer' },
   bellDot: { position: 'absolute', top: 6, right: 6, width: 7, height: 7, background: '#e05252', borderRadius: '50%', border: '1.5px solid #fff' },
-
   nav: { background: '#ffffff', borderBottom: '1px solid #dde3ed', position: 'sticky', top: 54, zIndex: 40 },
   navInner: { maxWidth: 960, margin: '0 auto', padding: '0 20px', display: 'flex' },
   navBtn: { padding: '12px 18px', fontSize: 13, letterSpacing: '0.01em', transition: 'color 0.2s', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' },
-
   main: { maxWidth: 960, margin: '0 auto', padding: '0 20px 60px' },
   page: { paddingTop: 32 },
   pageHeader: { marginBottom: 24 },
   pageTitle: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 'clamp(22px, 5vw, 32px)', color: '#0f172a', marginTop: 4, lineHeight: 1.1 },
   pageSub: { fontSize: 13, color: '#5c718a', marginTop: 6, lineHeight: 1.65 },
-
   hero: { textAlign: 'center', padding: '36px 0 28px' },
   heroEyebrow: { fontSize: 10, fontWeight: 700, color: '#7a8eaa', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 },
   heroTitle: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 'clamp(40px, 10vw, 68px)', color: '#0f172a', lineHeight: 1, letterSpacing: '-0.02em' },
   heroSub: { fontSize: 14, color: '#5c718a', marginTop: 12, lineHeight: 1.7, maxWidth: 400, margin: '12px auto 0' },
-
   statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 18 },
   statCard: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 11, padding: '13px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 },
   statValue: { fontFamily: "'DM Serif Display', serif", fontSize: 24, color: '#1e3a5f', lineHeight: 1.1 },
   statLabel: { fontSize: 10, color: '#7a8eaa', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em' },
-
   ctaGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginBottom: 22 },
   ctaCard: { display: 'flex', alignItems: 'center', gap: 13, padding: '18px 16px', borderRadius: 13, cursor: 'pointer', textAlign: 'left', border: '1.5px solid #c5d0e0', transition: 'background 0.22s ease, border-color 0.22s ease', width: '100%' },
   ctaIconBox: { width: 38, height: 38, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'background 0.22s ease' },
   ctaTitle: { fontSize: 14, fontWeight: 700, marginBottom: 3 },
   ctaSub: { fontSize: 12, lineHeight: 1.45 },
-
   howSection: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 13, padding: '22px 20px', marginBottom: 18 },
   sectionLabel: { fontSize: 10, fontWeight: 700, color: '#7a8eaa', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 18 },
   howRow: { display: 'flex', alignItems: 'flex-start', gap: 15, marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #eef1f7' },
@@ -579,9 +673,32 @@ const s = {
   howTitle: { fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 3 },
   howDesc: { fontSize: 13, color: '#5c718a', lineHeight: 1.55 },
 
+  // ── Agent Section ──
+  agentSection: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 13, padding: '22px 20px', marginBottom: 18 },
+  agentHeader: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 },
+  agentDotWrap: { flexShrink: 0 },
+  agentDot: { width: 10, height: 10, borderRadius: '50%', background: '#1a4d33', animation: 'pulse 1.8s ease-in-out infinite', boxShadow: '0 0 0 3px rgba(26,77,51,0.15)' },
+  agentTitle: { fontSize: 13, fontWeight: 600, color: '#0f172a', marginBottom: 2 },
+  agentSub: { fontSize: 11.5, color: '#5c718a', lineHeight: 1.5 },
+  agentBadge: { fontSize: 10, fontWeight: 700, color: '#1a4d33', background: '#e8f2ec', border: '1px solid #b8ddc8', borderRadius: 20, padding: '3px 10px', flexShrink: 0 },
+  agentEngines: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 },
+  enginePill: { background: '#f8fafc', border: '1px solid #eef1f7', borderRadius: 9, padding: '10px 12px', textAlign: 'center' },
+  engineLabel: { fontSize: 12, fontWeight: 600, color: '#1e3a5f', marginBottom: 2 },
+  engineSub: { fontSize: 10, color: '#7a8eaa' },
+  agentSteps: { display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 14 },
+  agentStep: { display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 8 },
+  agentStepIcon: { width: 20, height: 20, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  agentStepLabel: { fontSize: 12, fontWeight: 600, marginBottom: 3 },
+  agentStepSub: { fontSize: 11, color: '#2d7a50' },
+  scanBarTrack: { height: 3, background: '#dde3ed', borderRadius: 2, overflow: 'hidden', marginTop: 4 },
+  scanBarFill: { height: '100%', background: '#1e3a5f', borderRadius: 2, transition: 'width 0.06s linear' },
+  agentNotifyBar: { display: 'flex', alignItems: 'center', gap: 12, background: '#1e3a5f', borderRadius: 10, padding: '13px 15px' },
+  agentNotifyIcon: { width: 28, height: 28, borderRadius: 8, background: '#1a4d33', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  agentNotifyTitle: { fontSize: 12.5, fontWeight: 600, color: '#ffffff', marginBottom: 2 },
+  agentNotifySub: { fontSize: 11, color: '#7a9bbf' },
+
   badges: { display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 8 },
   badge: { fontSize: 12, color: '#4a6080', background: '#eef1f7', borderRadius: 20, padding: '5px 12px', fontWeight: 500 },
-
   toggle: { display: 'flex', background: '#eef1f7', borderRadius: 9, padding: 3, marginBottom: 22, gap: 3 },
   toggleBtn: { flex: 1, padding: '10px', borderRadius: 7, fontSize: 13, fontWeight: 500, transition: 'background 0.22s, color 0.22s', border: 'none', cursor: 'pointer', fontFamily: 'inherit' },
   formStack: { display: 'flex', flexDirection: 'column', gap: 18 },
@@ -597,6 +714,13 @@ const s = {
   locationRow: { display: 'flex', gap: 8 },
   gpsBtn: { flexShrink: 0, width: 42, height: 42, background: '#1e3a5f', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer' },
   gpsConfirm: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#1a4d33', fontWeight: 500, marginTop: 4 },
+
+  // ── Contact Section ──
+  contactSection: { background: '#f8fafc', border: '1px solid #dde3ed', borderRadius: 11, padding: '16px' },
+  contactSectionTitle: { fontSize: 12, fontWeight: 700, color: '#2d4460', marginBottom: 4, letterSpacing: '0.01em' },
+  contactSectionSub: { fontSize: 11.5, color: '#5c718a', lineHeight: 1.6 },
+  contactHint: { fontSize: 11, color: '#9aafc4', marginTop: 4 },
+
   rewardWrap: { position: 'relative' },
   currencySymbol: { position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: '#9aafc4' },
   uploadZone: { border: '1.5px dashed #c2cfe0', borderRadius: 11, padding: 26, textAlign: 'center', background: '#f8fafc', transition: 'border 0.15s' },
@@ -609,7 +733,6 @@ const s = {
   removeBtn: { position: 'absolute', top: -8, right: -8, width: 26, height: 26, background: '#e05252', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: 'none' },
   fieldError: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#e05252', fontWeight: 500 },
   submitBtn: { width: '100%', padding: '13px', borderRadius: 11, fontSize: 14, fontWeight: 600, color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4, border: 'none', transition: 'opacity 0.15s' },
-
   searchRow: { display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
   searchWrap: { position: 'relative', flex: 1, minWidth: 200 },
   searchIcon: { position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)' },
@@ -629,7 +752,6 @@ const s = {
   itemMeta: { display: 'flex', flexDirection: 'column', gap: 4 },
   itemMetaRow: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: '#7a8eaa' },
   rewardBadge: { marginTop: 9, fontSize: 12, color: '#1a4d33', background: '#e8f2ec', border: '1px solid #a7d4b8', borderRadius: 6, padding: '4px 10px', fontWeight: 600, display: 'inline-block' },
-
   matchGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 },
   matchCard: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 13, padding: '18px' },
   matchHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
@@ -643,16 +765,13 @@ const s = {
   matchBarTrack: { height: 5, background: '#eef1f7', borderRadius: 4, overflow: 'hidden' },
   matchBarFill: { height: '100%', borderRadius: 4, transition: 'width 0.6s ease' },
   matchConfidenceLabel: { fontSize: 12, color: '#5c718a', fontWeight: 500 },
-
   loadingState: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '60px 0' },
   loadingText: { fontSize: 13, color: '#7a8eaa' },
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '60px 20px', gap: 10 },
   emptyTitle: { fontSize: 15, fontWeight: 600, color: '#2d4460' },
   emptyDesc: { fontSize: 13, color: '#7a8eaa', lineHeight: 1.6 },
   emptyBtn: { marginTop: 8, padding: '10px 22px', background: '#1e3a5f', color: '#fff', borderRadius: 9, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: 'none' },
-
   notification: { position: 'fixed', top: 14, right: 14, zIndex: 999, color: '#fff', padding: '10px 16px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 500, animation: 'slideDown 0.25s ease', maxWidth: 320 },
-
   footer: { background: '#1e3a5f', marginTop: 20 },
   footerInner: { maxWidth: 960, margin: '0 auto', padding: '40px 20px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 },
   footerBrand: { display: 'flex', alignItems: 'center', gap: 10 },
