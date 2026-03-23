@@ -24,6 +24,7 @@ from models import (
     validate_category,
     validate_item_type
 )
+from notifications import notify_match
 
 # ======================================================
 # APP INIT
@@ -233,7 +234,26 @@ async def get_stats():
 # BACKGROUND
 # ======================================================
 async def trigger_ai_processing(item_id: str):
-    print(f"🤖 AI processing queued for item: {item_id}")
+    print(f"🤖 AI processing started for item: {item_id}")
+
+    new_item = db.get_item(item_id)
+    all_items = db.get_all_items(limit=100)
+
+    for item in all_items:
+        if item["item_id"] == item_id:
+            continue
+
+        # Simple matching logic
+        if new_item["category"] == item["category"]:
+            confidence = 0.85  # dummy AI score
+
+            # LOST → FOUND
+            if new_item["item_type"] == "lost" and item["item_type"] == "found":
+                notify_match(new_item, item, confidence)
+
+            # FOUND → LOST
+            elif new_item["item_type"] == "found" and item["item_type"] == "lost":
+                notify_match(item, new_item, confidence)
 
 # ======================================================
 # RUN
