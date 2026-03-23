@@ -1,17 +1,18 @@
 """
 FINDORA - Notification Engine
-Uses Gmail SMTP — sends to ANY email worldwide, free forever.
-Handles contact_info format: "email" or "email | phone"
+Gmail SMTP — images embedded as Base64 in email (works locally + cloud)
 """
 
 import os
 import re
 import smtplib
 import ssl
+import base64
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from datetime import datetime
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,16 +20,11 @@ load_dotenv()
 GMAIL_ADDRESS  = os.getenv("GMAIL_ADDRESS", "")
 GMAIL_APP_PASS = os.getenv("GMAIL_APP_PASSWORD", "")
 FROM_NAME      = os.getenv("FROM_NAME", "Findora")
+API_BASE       = os.getenv("API_BASE_URL", "http://localhost:8000")
 ENABLED        = bool(GMAIL_ADDRESS and GMAIL_APP_PASS)
 
 
-# ─── Parse contact_info → (email, phone|None) ─────────────────────────
 def parse_contact(contact_info: str) -> Tuple[str, Optional[str]]:
-    """
-    Parses contact_info stored as:
-      "user@email.com"              → ("user@email.com", None)
-      "user@email.com | +91 98765"  → ("user@email.com", "+91 98765")
-    """
     parts = [p.strip() for p in contact_info.split("|")]
     email = parts[0] if parts else ""
     phone = parts[1] if len(parts) > 1 and parts[1] else None
@@ -39,32 +35,101 @@ def is_valid_email(s: str) -> bool:
     return bool(re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+", s.strip()))
 
 
-# ─── Build contact box HTML (shows email + phone if available) ────────
+def resolve_image_path(image_path: str) -> Optional[str]:
+    """Resolve image_path to absolute local file path"""
+    if not image_path:
+        return None
+    image_path = image_path.replace("\\", "/").lstrip("/")
+
+    if os.path.exists("/data"):
+        full = os.path.join("/data", image_path)
+    else:
+        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__)))
+        full = os.path.join(backend_dir, image_path)
+
+    full = os.path.normpath(full)
+    return full if os.path.exists(full) else None
+
+
+def load_image_base64(image_path: str) -> Optional[Tuple[str, str, str]]:
+    """
+    Returns (cid, base64_data, mime_type) or None
+    cid = content ID for embedding in HTML as cid:xxx
+    """
+    full_path = resolve_image_path(image_path)
+    if not full_path:
+        return None
+
+    ext = full_path.lower().split(".")[-1]
+    if ext in ("jpg", "jpeg"):
+        mime = "image/jpeg"
+    elif ext == "png":
+        mime = "image/png"
+    elif ext == "webp":
+        mime = "image/webp"
+    else:
+        return None
+
+    try:
+        with open(full_path, "rb") as f:
+            data = base64.b64encode(f.read()).decode("utf-8")
+        cid = os.path.basename(full_path).replace(".", "_")
+        return cid, data, mime
+    except Exception as e:
+        print(f"   ⚠️  Could not load image: {full_path} — {e}")
+        return None
+
+
 def build_contact_box(other_label: str, contact_info: str) -> str:
     email, phone = parse_contact(contact_info)
     phone_row = ""
     if phone:
         phone_row = f"""
-    <tr><td style="padding:6px 0 0;">
+    <tr><td style="padding-top:8px;">
       <p style="margin:0 0 2px;font-size:9px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;">Mobile</p>
       <p style="margin:0;font-size:14px;font-weight:600;color:#fff;">{phone}</p>
     </td></tr>"""
-
     return f"""
   <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
   <tr><td style="background:#1e3a5f;border-radius:9px;padding:13px 15px;">
-    <p style="margin:0 0 6px;font-size:9px;font-weight:700;color:rgba(255,255,255,.55);letter-spacing:.1em;text-transform:uppercase;">Contact the {other_label} Person</p>
+    <p style="margin:0 0 8px;font-size:9px;font-weight:700;color:rgba(255,255,255,.55);letter-spacing:.1em;text-transform:uppercase;">Contact the {other_label} Person</p>
     <table width="100%" cellpadding="0" cellspacing="0">
-      <tr><td style="padding-bottom:{'6px' if phone else '0'};">
+      <tr><td>
         <p style="margin:0 0 2px;font-size:9px;font-weight:700;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;">Email</p>
-        <p style="margin:0;font-size:14px;font-weight:600;color:#fff;">{email}</p>
+        <p style="margin:0;font-size:14px;font-weight:600;color:#7ab8ff;">{email}</p>
       </td></tr>{phone_row}
     </table>
   </td></tr></table>"""
 
 
-# ─── HTML email template ──────────────────────────────────────────────
-def build_html(recipient_role, recipient_item, matched_item, confidence):
+def item_card_html(label: str, item: Dict, border_color: str, bg: str, img_cid: Optional[str]) -> str:
+    def trunc(t, n=120):
+        return (t[:n] + "...") if len(t) > n else t
+
+    img_html = ""
+    if img_cid:
+        img_html = f"""
+      <tr><td style="padding-top:10px;">
+        <img src="cid:{img_cid}" alt="{item.get('title','')}"
+          style="width:100%;max-height:220px;object-fit:cover;border-radius:7px;display:block;" />
+      </td></tr>"""
+
+    return f"""
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+  <tr><td style="background:{bg};border-radius:9px;overflow:hidden;border-left:3px solid {border_color};">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:13px 15px;">
+      <tr><td>
+        <p style="margin:0 0 4px;font-size:9px;font-weight:700;color:#7a8eaa;letter-spacing:.1em;text-transform:uppercase;">{label}</p>
+        <p style="margin:0 0 3px;font-size:14px;font-weight:600;color:#0f172a;">{item.get('title','—')}</p>
+        <p style="margin:0 0 4px;font-size:12px;color:#5c718a;line-height:1.5;">{trunc(item.get('description',''))}</p>
+        <p style="margin:0;font-size:11px;color:#7a8eaa;">&#128205; {item.get('location','—')}</p>
+      </td></tr>
+      {img_html}
+    </table>
+  </td></tr></table>"""
+
+
+def build_html(recipient_role, recipient_item, matched_item, confidence, r_cid, m_cid):
     role_label  = "Lost"  if recipient_role == "lost"  else "Found"
     other_label = "Found" if recipient_role == "lost"  else "Lost"
     action_text = "may have been found" if recipient_role == "lost" else "may belong to someone"
@@ -73,10 +138,9 @@ def build_html(recipient_role, recipient_item, matched_item, confidence):
     bar_width   = round(pct)
     now         = datetime.now().strftime("%d %b %Y, %I:%M %p")
 
-    def trunc(t, n=120):
-        return (t[:n] + "...") if len(t) > n else t
-
-    contact_box = build_contact_box(other_label, matched_item.get("contact_info", "—"))
+    your_card    = item_card_html(f"Your {role_label} Item",     recipient_item, "#c5d0e0", "#f0f2f5", r_cid)
+    matched_card = item_card_html(f"Matched {other_label} Item", matched_item,  "#1e3a5f", "#eef1f7", m_cid)
+    contact_box  = build_contact_box(other_label, matched_item.get("contact_info", "—"))
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -105,23 +169,10 @@ def build_html(recipient_role, recipient_item, matched_item, confidence):
 <tr><td style="padding:24px 26px;">
   <p style="margin:0 0 5px;font-size:10px;font-weight:700;color:#7a8eaa;letter-spacing:.1em;text-transform:uppercase;">Match Alert</p>
   <p style="margin:0 0 14px;font-size:22px;font-style:italic;color:#0f172a;font-family:Georgia,serif;">Your {role_label} item {action_text}</p>
-  <p style="margin:0 0 20px;font-size:13px;color:#5c718a;line-height:1.65;">Our AI found a potential match. Review the details and contact the other party to confirm.</p>
+  <p style="margin:0 0 20px;font-size:13px;color:#5c718a;line-height:1.65;">Our AI found a potential match. Compare the images below and contact the other party to confirm.</p>
 
-  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px;">
-  <tr><td style="background:#f0f2f5;border-radius:9px;padding:13px 15px;">
-    <p style="margin:0 0 4px;font-size:9px;font-weight:700;color:#7a8eaa;letter-spacing:.1em;text-transform:uppercase;">Your {role_label} Item</p>
-    <p style="margin:0 0 3px;font-size:14px;font-weight:600;color:#0f172a;">{recipient_item.get('title','—')}</p>
-    <p style="margin:0 0 4px;font-size:12px;color:#5c718a;line-height:1.5;">{trunc(recipient_item.get('description',''))}</p>
-    <p style="margin:0;font-size:11px;color:#7a8eaa;">&#128205; {recipient_item.get('location','—')}</p>
-  </td></tr></table>
-
-  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
-  <tr><td style="background:#eef1f7;border-radius:9px;padding:13px 15px;border-left:3px solid #1e3a5f;">
-    <p style="margin:0 0 4px;font-size:9px;font-weight:700;color:#7a8eaa;letter-spacing:.1em;text-transform:uppercase;">Matched {other_label} Item</p>
-    <p style="margin:0 0 3px;font-size:14px;font-weight:600;color:#0f172a;">{matched_item.get('title','—')}</p>
-    <p style="margin:0 0 4px;font-size:12px;color:#5c718a;line-height:1.5;">{trunc(matched_item.get('description',''))}</p>
-    <p style="margin:0;font-size:11px;color:#7a8eaa;">&#128205; {matched_item.get('location','—')}</p>
-  </td></tr></table>
+  {your_card}
+  {matched_card}
 
   <p style="margin:0 0 6px;font-size:11.5px;font-weight:600;color:#2d4460;">Match Confidence: {pct}%</p>
   <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;">
@@ -133,7 +184,7 @@ def build_html(recipient_role, recipient_item, matched_item, confidence):
 
   {contact_box}
 
-  <p style="margin:0;font-size:12px;color:#7a8eaa;line-height:1.65;">Reach out directly to confirm. If this is not your item, ignore this email.</p>
+  <p style="margin:0;font-size:12px;color:#7a8eaa;line-height:1.65;">Reach out directly to confirm. If this is not your item, please ignore this email.</p>
 </td></tr>
 
 <tr><td style="background:#1e3a5f;padding:16px 26px;text-align:center;">
@@ -157,13 +208,13 @@ def build_text(recipient_role, recipient_item, matched_item, confidence):
 
 Your {rl} item '{recipient_item.get('title')}' may have been matched.
 
-YOUR ITEM: {recipient_item.get('title')}
+YOUR {rl.upper()} ITEM: {recipient_item.get('title')}
 {recipient_item.get('description','')}
-Location: {recipient_item.get('location','')}
+Location : {recipient_item.get('location','')}
 
 MATCHED {ol.upper()} ITEM: {matched_item.get('title')}
 {matched_item.get('description','')}
-Location: {matched_item.get('location','')}
+Location : {matched_item.get('location','')}
 
 CONTACT THE {ol.upper()} PERSON:
 Email  : {email}
@@ -173,30 +224,49 @@ Email  : {email}
 """
 
 
-# ─── Send via Gmail SMTP ──────────────────────────────────────────────
 def send_email(to_address, recipient_role, recipient_item, matched_item, confidence):
     if not ENABLED:
-        print("   ⚠️  Gmail not configured — set GMAIL_ADDRESS + GMAIL_APP_PASSWORD in .env")
+        print("   ⚠️  Gmail not configured")
         return False
 
     rl      = "Lost" if recipient_role == "lost" else "Found"
     subject = f"Findora — Your {rl} item may have been matched ({round(confidence*100)}%)"
 
+    # Load images
+    r_img = load_image_base64(recipient_item.get("image_path", ""))
+    m_img = load_image_base64(matched_item.get("image_path", ""))
+    r_cid = r_img[0] if r_img else None
+    m_cid = m_img[0] if m_img else None
+
     try:
-        msg = MIMEMultipart("alternative")
+        # Use 'related' so inline images work
+        msg = MIMEMultipart("mixed")
         msg["Subject"] = subject
         msg["From"]    = f"{FROM_NAME} <{GMAIL_ADDRESS}>"
         msg["To"]      = to_address
 
-        msg.attach(MIMEText(build_text(recipient_role, recipient_item, matched_item, confidence), "plain"))
-        msg.attach(MIMEText(build_html(recipient_role, recipient_item, matched_item, confidence), "html"))
+        # Text + HTML as alternatives
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(build_text(recipient_role, recipient_item, matched_item, confidence), "plain"))
+        alt.attach(MIMEText(build_html(recipient_role, recipient_item, matched_item, confidence, r_cid, m_cid), "html"))
+        msg.attach(alt)
+
+        # Attach images with Content-ID
+        for img_data in [r_img, m_img]:
+            if img_data:
+                cid, b64data, mime_type = img_data
+                img_bytes = base64.b64decode(b64data)
+                mime_img  = MIMEImage(img_bytes, _subtype=mime_type.split("/")[1])
+                mime_img.add_header("Content-ID", f"<{cid}>")
+                mime_img.add_header("Content-Disposition", "inline")
+                msg.attach(mime_img)
 
         ctx = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx) as smtp:
             smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASS)
             smtp.sendmail(GMAIL_ADDRESS, to_address, msg.as_string())
 
-        print(f"   📧 Email sent → {to_address}")
+        print(f"   📧 Email sent → {to_address} (images: {'✓' if r_cid or m_cid else '✗'})")
         return True
 
     except Exception as e:
@@ -204,7 +274,6 @@ def send_email(to_address, recipient_role, recipient_item, matched_item, confide
         return False
 
 
-# ─── Main entry — called by agent ────────────────────────────────────
 def notify_match(lost_item: Dict, found_item: Dict, confidence: float):
     print(f"\n   📣 Notifying users ({round(confidence*100)}% match)...")
 
