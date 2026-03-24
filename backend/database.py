@@ -1,9 +1,7 @@
-# backend/database.py
 """
-SQLite Database for Findora
-UPDATED FOR RENDER DEPLOYMENT
-- Uses /data/findora.db on Render (persistent disk)
-- Falls back to local data/findora.db when running locally
+SQLite Database for Findora — FIXED
+- get_all_items(status=None) returns ALL items including matched ones
+- Browse tab now shows all items even after matching
 """
 
 import sqlite3
@@ -12,9 +10,6 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import os
 
-# ======================================================
-# DB PATH — Auto-detects Render vs Local
-# ======================================================
 if os.path.exists("/data"):
     DB_PATH = "/data/findora.db"
 else:
@@ -22,7 +17,6 @@ else:
 
 
 class Database:
-    """SQLite database manager"""
 
     def __init__(self):
         os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
@@ -31,13 +25,8 @@ class Database:
         self.create_tables()
         print(f"✅ Database connected: {DB_PATH}")
 
-    # =====================================================
-    # TABLE CREATION
-    # =====================================================
     def create_tables(self):
         cursor = self.conn.cursor()
-
-        # 17 columns total
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS items (
                 item_id TEXT PRIMARY KEY,
@@ -59,7 +48,6 @@ class Database:
                 text_embedding TEXT
             )
         """)
-
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS matches (
                 match_id TEXT PRIMARY KEY,
@@ -77,7 +65,6 @@ class Database:
                 FOREIGN KEY (found_item_id) REFERENCES items(item_id)
             )
         """)
-
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
@@ -88,22 +75,14 @@ class Database:
                 updated_at TEXT NOT NULL
             )
         """)
-
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_item_type ON items(item_type)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_category ON items(category)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON items(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON items(user_id)")
-
         self.conn.commit()
         print("✅ Database tables created successfully!")
 
-    # =====================================================
-    # ITEM OPERATIONS
-    # =====================================================
     def insert_item(self, item: Dict) -> bool:
         try:
             cursor = self.conn.cursor()
-            # Exactly 17 columns — 17 placeholders
             cursor.execute("""
                 INSERT INTO items (
                     item_id, user_id, title, description, category,
@@ -112,21 +91,13 @@ class Database:
                     image_features, text_embedding
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
-                item['item_id'],
-                item['user_id'],
-                item['title'],
-                item['description'],
-                item['category'],
-                item['location'],
-                item.get('latitude'),
-                item.get('longitude'),
-                item['item_type'],
-                item.get('reward_amount', 0),
-                item['contact_info'],
-                item.get('image_path'),
+                item['item_id'], item['user_id'], item['title'],
+                item['description'], item['category'], item['location'],
+                item.get('latitude'), item.get('longitude'),
+                item['item_type'], item.get('reward_amount', 0),
+                item['contact_info'], item.get('image_path'),
                 item.get('status', 'active'),
-                item['created_at'],
-                item['updated_at'],
+                item['created_at'], item['updated_at'],
                 json.dumps(item.get('image_features')) if item.get('image_features') else None,
                 json.dumps(item.get('text_embedding')) if item.get('text_embedding') else None,
             ))
@@ -149,17 +120,36 @@ class Database:
             item["text_embedding"] = json.loads(item["text_embedding"])
         return item
 
+    # ─── KEY FIX: status=None → returns ALL items (active + matched) ──────────
     def get_all_items(self, item_type=None, status="active", limit=50) -> List[Dict]:
         cursor = self.conn.cursor()
-        query = "SELECT * FROM items WHERE status = ?"
-        params = [status]
+
+        if status is None:
+            query = "SELECT * FROM items WHERE 1=1"
+            params = []
+        else:
+            query = "SELECT * FROM items WHERE status = ?"
+            params = [status]
+
         if item_type:
             query += " AND item_type = ?"
             params.append(item_type)
+
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
         cursor.execute(query, params)
-        return [dict(row) for row in cursor.fetchall()]
+
+        result = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            if item.get("image_features"):
+                try: item["image_features"] = json.loads(item["image_features"])
+                except: item["image_features"] = None
+            if item.get("text_embedding"):
+                try: item["text_embedding"] = json.loads(item["text_embedding"])
+                except: item["text_embedding"] = None
+            result.append(item)
+        return result
 
     def update_item(self, item_id: str, updates: Dict) -> bool:
         cursor = self.conn.cursor()
@@ -170,17 +160,13 @@ class Database:
         self.conn.commit()
         return True
 
-    # =====================================================
-    # AI FEATURE PIPELINE SUPPORT
-    # =====================================================
     def get_items_without_features(self, limit: int = 10) -> List[Dict]:
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT * FROM items
             WHERE status='active'
             AND (image_features IS NULL OR text_embedding IS NULL)
-            ORDER BY created_at ASC
-            LIMIT ?
+            ORDER BY created_at ASC LIMIT ?
         """, (limit,))
         items = []
         for row in cursor.fetchall():
@@ -195,21 +181,13 @@ class Database:
     def update_item_features(self, item_id: str, image_features, text_embedding) -> bool:
         cursor = self.conn.cursor()
         cursor.execute("""
-            UPDATE items
-            SET image_features=?, text_embedding=?, updated_at=?
+            UPDATE items SET image_features=?, text_embedding=?, updated_at=?
             WHERE item_id=?
-        """, (
-            json.dumps(image_features),
-            json.dumps(text_embedding),
-            datetime.utcnow().isoformat(),
-            item_id
-        ))
+        """, (json.dumps(image_features), json.dumps(text_embedding),
+              datetime.utcnow().isoformat(), item_id))
         self.conn.commit()
         return True
 
-    # =====================================================
-    # MATCHES (DUPLICATE-SAFE)
-    # =====================================================
     def match_exists(self, lost_item_id: str, found_item_id: str) -> bool:
         cursor = self.conn.cursor()
         cursor.execute("""
@@ -242,15 +220,10 @@ class Database:
         """, (item_id, item_id))
         return [dict(row) for row in cursor.fetchall()]
 
-    # =====================================================
-    # USERS
-    # =====================================================
     def insert_user(self, user: Dict) -> bool:
         try:
             cursor = self.conn.cursor()
-            cursor.execute("""
-                INSERT INTO users VALUES (?,?,?,?,?,?)
-            """, (
+            cursor.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (
                 user["user_id"], user["email"], user["name"],
                 user.get("phone", ""), user["created_at"], user["updated_at"]
             ))
@@ -270,5 +243,4 @@ class Database:
         self.conn.close()
 
 
-# Global DB instance
 db = Database()
