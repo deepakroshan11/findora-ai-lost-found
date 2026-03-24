@@ -120,15 +120,19 @@ class Database:
             item["text_embedding"] = json.loads(item["text_embedding"])
         return item
 
-    # ─── KEY FIX: status=None → returns ALL items (active + matched) ──────────
     def get_all_items(self, item_type=None, status="active", limit=50) -> List[Dict]:
+        """
+        status=None  → return ALL items (active + matched + any other)
+        status="active" → only active
+        status="matched" → only matched
+        """
         cursor = self.conn.cursor()
 
         if status is None:
-            query = "SELECT * FROM items WHERE 1=1"
+            query  = "SELECT * FROM items WHERE 1=1"
             params = []
         else:
-            query = "SELECT * FROM items WHERE status = ?"
+            query  = "SELECT * FROM items WHERE status = ?"
             params = [status]
 
         if item_type:
@@ -143,18 +147,22 @@ class Database:
         for row in cursor.fetchall():
             item = dict(row)
             if item.get("image_features"):
-                try: item["image_features"] = json.loads(item["image_features"])
-                except: item["image_features"] = None
+                try:
+                    item["image_features"] = json.loads(item["image_features"])
+                except Exception:
+                    item["image_features"] = None
             if item.get("text_embedding"):
-                try: item["text_embedding"] = json.loads(item["text_embedding"])
-                except: item["text_embedding"] = None
+                try:
+                    item["text_embedding"] = json.loads(item["text_embedding"])
+                except Exception:
+                    item["text_embedding"] = None
             result.append(item)
         return result
 
     def update_item(self, item_id: str, updates: Dict) -> bool:
         cursor = self.conn.cursor()
         updates["updated_at"] = datetime.utcnow().isoformat()
-        keys = ", ".join([f"{k}=?" for k in updates.keys()])
+        keys   = ", ".join([f"{k}=?" for k in updates.keys()])
         values = list(updates.values()) + [item_id]
         cursor.execute(f"UPDATE items SET {keys} WHERE item_id = ?", values)
         self.conn.commit()

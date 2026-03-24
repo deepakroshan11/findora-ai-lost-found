@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp, Clock, Sparkles, Shield, Zap, Activity } from 'lucide-react';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+// ─── IMPORTANT: set REACT_APP_API_URL in Vercel environment variables ─────────
+// e.g. https://findora-ai-lost-found-1.onrender.com
+const API_BASE = (process.env.REACT_APP_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 const FieldError = ({ msg }) => msg ? (
   <p style={s.fieldError}><AlertCircle size={13} />{msg}</p>
@@ -13,44 +15,34 @@ const Spinner = ({ size = 20, color = '#ffffff' }) => (
 
 // ─── AI Agent Status Section ──────────────────────────────────────────────────
 const AgentStatusSection = () => {
-  const [step, setStep] = useState(0);
   const [scanPct, setScanPct] = useState(0);
   const steps = [
-    { label: 'Extracting image features', sub: 'MobileNetV3 · CNN Vision Encoder', done: true },
-    { label: 'Computing text embeddings', sub: 'all-MiniLM-L6-v2 · 384-dim vector', done: true },
+    { label: 'Keyword + semantic analysis', sub: 'Title, description, category overlap', done: true },
+    { label: 'Computing confidence score', sub: '0–100% match confidence', done: true },
     { label: 'Scanning for matches...', sub: 'Comparing against all active items', done: false },
   ];
 
   useEffect(() => {
-    const t1 = setInterval(() => {
-      setScanPct(p => { if (p >= 100) { return 0; } return p + 2; });
-    }, 60);
-    const t2 = setInterval(() => {
-      setStep(s => (s + 1) % 4);
-    }, 1800);
-    return () => { clearInterval(t1); clearInterval(t2); };
+    const t1 = setInterval(() => setScanPct(p => p >= 100 ? 0 : p + 2), 60);
+    return () => clearInterval(t1);
   }, []);
 
   return (
     <div style={s.agentSection}>
       <p style={s.sectionLabel}>AI Agent — Running</p>
-
       <div style={s.agentHeader}>
-        <div style={s.agentDotWrap}>
-          <div style={s.agentDot} />
-        </div>
+        <div style={s.agentDotWrap}><div style={s.agentDot} /></div>
         <div style={{ flex: 1 }}>
           <p style={s.agentTitle}>Autonomous matching agent active</p>
-          <p style={s.agentSub}>Scans all items every 30 seconds · Notifies users via email when match ≥ 80%</p>
+          <p style={s.agentSub}>Triggers on every submission · Notifies users via email when match ≥ 75%</p>
         </div>
         <span style={s.agentBadge}>Live</span>
       </div>
-
       <div style={s.agentEngines}>
         {[
-          { label: 'CNN Vision', sub: 'Image features' },
-          { label: 'NLP Text', sub: 'Semantic match' },
-          { label: 'GPS Score', sub: 'Location weight' },
+          { label: 'Title Match', sub: 'Keyword overlap' },
+          { label: 'Description', sub: 'Semantic match' },
+          { label: 'Category', sub: 'Type bonus' },
         ].map((e, i) => (
           <div key={i} style={s.enginePill}>
             <p style={s.engineLabel}>{e.label}</p>
@@ -58,33 +50,23 @@ const AgentStatusSection = () => {
           </div>
         ))}
       </div>
-
       <div style={s.agentSteps}>
         {steps.map((st, i) => (
           <div key={i} style={{ ...s.agentStep, background: st.done ? '#e8f2ec' : '#eef1f7', border: `1px solid ${st.done ? '#b8ddc8' : '#dde3ed'}` }}>
             <div style={{ ...s.agentStepIcon, background: st.done ? '#1a4d33' : '#1e3a5f', animation: !st.done ? 'pulse 1.4s ease-in-out infinite' : 'none' }}>
-              {st.done
-                ? <Check size={10} color="#fff" strokeWidth={2.5} />
-                : <Activity size={10} color="#fff" strokeWidth={2} />}
+              {st.done ? <Check size={10} color="#fff" strokeWidth={2.5} /> : <Activity size={10} color="#fff" strokeWidth={2} />}
             </div>
             <div style={{ flex: 1 }}>
               <p style={{ ...s.agentStepLabel, color: st.done ? '#1a4d33' : '#0f172a' }}>{st.label}</p>
-              {!st.done && (
-                <div style={s.scanBarTrack}>
-                  <div style={{ ...s.scanBarFill, width: `${scanPct}%` }} />
-                </div>
-              )}
+              {!st.done && <div style={s.scanBarTrack}><div style={{ ...s.scanBarFill, width: `${scanPct}%` }} /></div>}
               {st.done && <p style={s.agentStepSub}>{st.sub}</p>}
             </div>
             <span style={{ fontSize: 10, color: st.done ? '#1a4d33' : '#7a8eaa', fontWeight: 600 }}>{st.done ? 'done' : 'active'}</span>
           </div>
         ))}
       </div>
-
       <div style={s.agentNotifyBar}>
-        <div style={s.agentNotifyIcon}>
-          <Check size={13} color="#fff" strokeWidth={2.5} />
-        </div>
+        <div style={s.agentNotifyIcon}><Check size={13} color="#fff" strokeWidth={2.5} /></div>
         <div>
           <p style={s.agentNotifyTitle}>Match found → both users notified instantly</p>
           <p style={s.agentNotifySub}>Email sent automatically with contact details of the other party</p>
@@ -102,7 +84,6 @@ const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) 
       <h1 style={s.heroTitle}>Findora</h1>
       <p style={s.heroSub}>Reconnecting people with their belongings — intelligently.</p>
     </div>
-
     {stats && (
       <div style={s.statsGrid}>
         {[
@@ -119,12 +100,9 @@ const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) 
         ))}
       </div>
     )}
-
     <div style={s.ctaGrid}>
-      <button
-        style={{ ...s.ctaCard, background: activeCTA === 'lost' ? '#1e3a5f' : '#ffffff', borderColor: activeCTA === 'lost' ? '#1e3a5f' : '#c5d0e0' }}
-        onClick={() => { setActiveCTA('lost'); setFormData(f => ({ ...f, itemType: 'lost' })); setTimeout(() => setActiveTab('report'), 200); }}
-      >
+      <button style={{ ...s.ctaCard, background: activeCTA === 'lost' ? '#1e3a5f' : '#ffffff', borderColor: activeCTA === 'lost' ? '#1e3a5f' : '#c5d0e0' }}
+        onClick={() => { setActiveCTA('lost'); setFormData(f => ({ ...f, itemType: 'lost' })); setTimeout(() => setActiveTab('report'), 200); }}>
         <div style={{ ...s.ctaIconBox, background: activeCTA === 'lost' ? 'rgba(255,255,255,0.18)' : '#eef1f7' }}>
           <Search size={18} color={activeCTA === 'lost' ? '#ffffff' : '#1e3a5f'} strokeWidth={1.8} />
         </div>
@@ -133,10 +111,8 @@ const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) 
           <p style={{ ...s.ctaSub, color: activeCTA === 'lost' ? 'rgba(255,255,255,0.72)' : '#5c718a' }}>Report &amp; let AI search for you</p>
         </div>
       </button>
-      <button
-        style={{ ...s.ctaCard, background: activeCTA === 'found' ? '#1a4d33' : '#ffffff', borderColor: activeCTA === 'found' ? '#1a4d33' : '#c5d0e0' }}
-        onClick={() => { setActiveCTA('found'); setFormData(f => ({ ...f, itemType: 'found' })); setTimeout(() => setActiveTab('report'), 200); }}
-      >
+      <button style={{ ...s.ctaCard, background: activeCTA === 'found' ? '#1a4d33' : '#ffffff', borderColor: activeCTA === 'found' ? '#1a4d33' : '#c5d0e0' }}
+        onClick={() => { setActiveCTA('found'); setFormData(f => ({ ...f, itemType: 'found' })); setTimeout(() => setActiveTab('report'), 200); }}>
         <div style={{ ...s.ctaIconBox, background: activeCTA === 'found' ? 'rgba(255,255,255,0.18)' : '#e8f2ec' }}>
           <Camera size={18} color={activeCTA === 'found' ? '#ffffff' : '#1a4d33'} strokeWidth={1.8} />
         </div>
@@ -146,13 +122,12 @@ const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) 
         </div>
       </button>
     </div>
-
     <div style={s.howSection}>
       <p style={s.sectionLabel}>How It Works</p>
       {[
         { step: '01', title: 'Upload & Describe', desc: 'Take a clear photo and describe your item with as much detail as possible.' },
-        { step: '02', title: 'AI Analyzes', desc: 'Our system cross-references image features, text, and location data intelligently.' },
-        { step: '03', title: 'Get Matched', desc: 'Receive a notification the moment a high-confidence match is found.' },
+        { step: '02', title: 'AI Analyzes', desc: 'Our system cross-references title keywords, description, and category intelligently.' },
+        { step: '03', title: 'Get Matched', desc: 'Receive an email notification the moment a high-confidence match is found.' },
       ].map(({ step, title, desc }, idx, arr) => (
         <div key={step} style={{ ...s.howRow, ...(idx === arr.length - 1 ? { borderBottom: 'none', marginBottom: 0, paddingBottom: 0 } : {}) }}>
           <span style={s.howStep}>{step}</span>
@@ -160,9 +135,7 @@ const HomeTab = ({ stats, activeCTA, setActiveCTA, setFormData, setActiveTab }) 
         </div>
       ))}
     </div>
-
     <AgentStatusSection />
-
     <div style={s.badges}>
       {['AI-Powered Matching', 'Secure & Private', 'Fast Results'].map(b => (
         <span key={b} style={s.badge}>{b}</span>
@@ -179,7 +152,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
       <h2 style={s.pageTitle}>Report {formData.itemType === 'lost' ? 'Lost' : 'Found'} Item</h2>
       <p style={s.pageSub}>The more detail you provide, the better our AI can find a match.</p>
     </div>
-
     <div style={s.toggle}>
       {['lost', 'found'].map(t => (
         <button key={t} onClick={() => setFormData(f => ({ ...f, itemType: t }))}
@@ -188,7 +160,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
         </button>
       ))}
     </div>
-
     <div style={s.formStack}>
       <div style={s.formGroup}>
         <label style={s.label}>Photo <span style={s.req}>*</span></label>
@@ -264,11 +235,9 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
         <FieldError msg={formErrors.location} />
       </div>
 
-      {/* ─── Contact Section ─── */}
       <div style={s.contactSection}>
         <p style={s.contactSectionTitle}>Contact Information</p>
         <p style={s.contactSectionSub}>When a match is found, we'll send the other person your contact details so they can reach you directly.</p>
-
         <div style={{ ...s.formGroup, marginTop: 12 }}>
           <label style={s.label}>Email Address <span style={s.req}>*</span></label>
           <input type="email" value={formData.contactEmail} placeholder="yourname@email.com"
@@ -277,7 +246,6 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
           <p style={s.contactHint}>You'll receive match alerts at this email</p>
           <FieldError msg={formErrors.contactEmail} />
         </div>
-
         <div style={{ ...s.formGroup, marginTop: 10 }}>
           <label style={s.label}>Mobile Number <span style={s.optional}>(optional)</span></label>
           <input type="tel" value={formData.contactPhone} placeholder="+91 98765 43210"
@@ -310,10 +278,12 @@ const ReportTab = ({ formData, setFormData, formErrors, setFormErrors, previewUr
 // ─── Browse Tab ───────────────────────────────────────────────────────────────
 const BrowseTab = ({ items, loading, filterType, setFilterType, searchQuery, setSearchQuery, setActiveTab }) => {
   const filteredItems = items.filter(item => {
-    const matchesType = filterType === 'all' || item.item_type === filterType;
-    const matchesSearch = !searchQuery || [item.title, item.description, item.location].some(f => f?.toLowerCase().includes(searchQuery.toLowerCase()));
+    const matchesType   = filterType === 'all' || item.item_type === filterType;
+    const matchesSearch = !searchQuery || [item.title, item.description, item.location]
+      .some(f => f?.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesType && matchesSearch;
   });
+
   return (
     <div style={s.page}>
       <div style={s.pageHeader}>
@@ -349,32 +319,44 @@ const BrowseTab = ({ items, loading, filterType, setFilterType, searchQuery, set
           <p style={s.resultCount}>{filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}</p>
           <div style={s.cardGrid}>
             {filteredItems.map(item => (
-              <div key={item.item_id} style={s.itemCard}>
-                <div style={s.itemImageWrap}>
-                  {item.image_path
-                    ? <img src={`${API_BASE}${item.image_path}`} alt={item.title} style={s.itemImage} />
-                    : <div style={s.itemImagePlaceholder}><Camera size={28} color="#c2cfe0" strokeWidth={1} /></div>}
-                  <span style={{ ...s.typeBadge, background: item.item_type === 'lost' ? '#1e3a5f' : '#1a4d33', color: '#ffffff' }}>
-                    {item.item_type.toUpperCase()}
-                  </span>
-                  {item.status === 'matched' && (
-                    <span style={s.matchedBadge}>✓ Matched</span>
-                  )}
-                </div>
-                <div style={s.itemBody}>
-                  <p style={s.itemTitle}>{item.title}</p>
-                  <p style={s.itemDesc}>{item.description}</p>
-                  <div style={s.itemMeta}>
-                    <span style={s.itemMetaRow}><MapPin size={12} strokeWidth={1.5} color="#7a8eaa" />{item.location}</span>
-                    <span style={s.itemMetaRow}><Clock size={12} strokeWidth={1.5} color="#7a8eaa" />{new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                  </div>
-                  {item.reward_amount > 0 && <div style={s.rewardBadge}>Reward: ${item.reward_amount}</div>}
-                </div>
-              </div>
+              <ItemCard key={item.item_id} item={item} />
             ))}
           </div>
         </>
       )}
+    </div>
+  );
+};
+
+// ─── Item Card with image error fallback ──────────────────────────────────────
+const ItemCard = ({ item }) => {
+  const [imgError, setImgError] = useState(false);
+
+  // image_path from API is now an absolute URL (https://...)
+  const imgSrc = item.image_path && !imgError ? item.image_path : null;
+
+  return (
+    <div style={s.itemCard}>
+      <div style={s.itemImageWrap}>
+        {imgSrc
+          ? <img src={imgSrc} alt={item.title} style={s.itemImage} onError={() => setImgError(true)} />
+          : <div style={s.itemImagePlaceholder}><Camera size={28} color="#c2cfe0" strokeWidth={1} /></div>}
+        <span style={{ ...s.typeBadge, background: item.item_type === 'lost' ? '#1e3a5f' : '#1a4d33', color: '#ffffff' }}>
+          {item.item_type.toUpperCase()}
+        </span>
+        {item.status === 'matched' && <span style={s.matchedBadge}>✓ Matched</span>}
+      </div>
+      <div style={s.itemBody}>
+        <p style={s.itemTitle}>{item.title}</p>
+        <p style={s.itemDesc}>{item.description}</p>
+        <div style={s.itemMeta}>
+          <span style={s.itemMetaRow}><MapPin size={12} strokeWidth={1.5} color="#7a8eaa" />{item.location}</span>
+          <span style={s.itemMetaRow}><Clock size={12} strokeWidth={1.5} color="#7a8eaa" />
+            {new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
+        </div>
+        {item.reward_amount > 0 && <div style={s.rewardBadge}>Reward: ${item.reward_amount}</div>}
+      </div>
     </div>
   );
 };
@@ -386,7 +368,7 @@ const MatchesTab = ({ matches, loading, setActiveTab, onRefresh }) => (
       <div>
         <p style={s.heroEyebrow}>AI Results</p>
         <h2 style={s.pageTitle}>Potential Matches</h2>
-        <p style={s.pageSub}>Showing matches with 80%+ confidence score. Auto-refreshes every 15s.</p>
+        <p style={s.pageSub}>Showing matches with 50%+ confidence. Auto-refreshes every 15s.</p>
       </div>
       <button onClick={onRefresh} disabled={loading}
         style={{ marginTop: 6, padding: '8px 16px', background: '#1e3a5f', color: '#fff', borderRadius: 8, fontSize: 12, fontWeight: 600, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -399,8 +381,8 @@ const MatchesTab = ({ matches, loading, setActiveTab, onRefresh }) => (
     ) : matches.length === 0 ? (
       <div style={s.emptyState}>
         <Sparkles size={36} color="#c2cfe0" strokeWidth={1} />
-        <p style={s.emptyTitle}>No high-confidence matches yet</p>
-        <p style={s.emptyDesc}>We will notify you once a potential match is identified.</p>
+        <p style={s.emptyTitle}>No matches yet</p>
+        <p style={s.emptyDesc}>Submit a lost and a found item with similar titles to trigger a match.</p>
         <button onClick={() => setActiveTab('report')} style={s.emptyBtn}>Submit a Report</button>
       </div>
     ) : (
@@ -425,7 +407,7 @@ const MatchesTab = ({ matches, loading, setActiveTab, onRefresh }) => (
                 <div style={{ ...s.matchBarFill, width: `${Math.round(match.confidence_score * 100)}%`, background: match.confidence_score >= 0.9 ? '#1a4d33' : '#1e3a5f' }} />
               </div>
             </div>
-            <p style={s.matchConfidenceLabel}>{match.confidence_score >= 0.9 ? 'High Confidence' : 'Good Confidence'}</p>
+            <p style={s.matchConfidenceLabel}>{match.confidence_score >= 0.75 ? '✉️ Email notification sent' : 'Below email threshold'}</p>
           </div>
         ))}
       </div>
@@ -435,35 +417,44 @@ const MatchesTab = ({ matches, loading, setActiveTab, onRefresh }) => (
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 const FindoraApp = () => {
-  const [activeTab, setActiveTab] = useState('home');
-  const [activeCTA, setActiveCTA] = useState(null);
-  const [items, setItems] = useState([]);
-  const [matches, setMatches] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [userId, setUserId] = useState(localStorage.getItem('findora_user_id') || null);
-  const [stats, setStats] = useState(null);
+  const [activeTab, setActiveTab]   = useState('home');
+  const [activeCTA, setActiveCTA]   = useState(null);
+  const [items, setItems]           = useState([]);
+  const [matches, setMatches]       = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [userId, setUserId]         = useState(localStorage.getItem('findora_user_id') || null);
+  const [stats, setStats]           = useState(null);
   const [filterType, setFilterType] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [notification, setNotification] = useState(null);
   const [formErrors, setFormErrors] = useState({});
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [backendOnline, setBackendOnline] = useState(true);
   const [formData, setFormData] = useState({
     title: '', description: '', category: 'wallet', location: '',
     latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0,
     contactEmail: '', contactPhone: '', image: null
   });
 
-  // ─── Auto-register user ───────────────────────────────────────────────────
+  // ── Keep-alive ping every 8 minutes to prevent Render sleep ──────────────
+  useEffect(() => {
+    const ping = () => fetch(`${API_BASE}/ping`).catch(() => {});
+    ping(); // immediate on load
+    const t = setInterval(ping, 8 * 60 * 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ── Auto-register ─────────────────────────────────────────────────────────
   useEffect(() => { if (!userId) autoRegisterUser(); }, [userId]);
 
-  // ─── Tab switching data fetches ───────────────────────────────────────────
+  // ── Tab data ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === 'browse')  fetchItems();
     if (activeTab === 'home')    fetchStats();
     if (activeTab === 'matches') fetchMatches();
   }, [activeTab]);
 
-  // ─── Auto-poll matches every 15s while on Matches tab ────────────────────
+  // ── Auto-poll matches every 15s ───────────────────────────────────────────
   useEffect(() => {
     if (activeTab !== 'matches') return;
     const interval = setInterval(fetchMatches, 15000);
@@ -472,21 +463,24 @@ const FindoraApp = () => {
 
   const autoRegisterUser = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/users/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res  = await fetch(`${API_BASE}/api/users/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: `user${Date.now()}@findora.app`, name: 'User', phone: '' })
       });
       if (!res.ok) throw new Error();
       const data = await res.json();
       setUserId(data.user_id);
       localStorage.setItem('findora_user_id', data.user_id);
-    } catch { showNotification('Connection error', 'error'); }
+      setBackendOnline(true);
+    } catch {
+      setBackendOnline(false);
+      showNotification('Backend offline — please wait a moment and refresh', 'error');
+    }
   };
 
   const showNotification = useCallback((message, type = 'success') => {
     setNotification({ message, type });
-    setTimeout(() => setNotification(null), 4000);
+    setTimeout(() => setNotification(null), 5000);
   }, []);
 
   const fetchStats = async () => {
@@ -499,58 +493,55 @@ const FindoraApp = () => {
   const fetchItems = async () => {
     try {
       setLoading(true);
+      // status not passed → backend returns ALL items (active + matched)
       const res = await fetch(`${API_BASE}/api/items`);
       if (res.ok) setItems(await res.json());
-    } catch { showNotification('Failed to load items', 'error'); }
-    finally { setLoading(false); }
+      else showNotification('Failed to load items', 'error');
+    } catch {
+      showNotification('Cannot reach backend — it may be starting up (30s)', 'error');
+    } finally { setLoading(false); }
   };
 
-  // ✅ FIXED: parallel fetches + deduplication by match_id
   const fetchMatches = useCallback(async () => {
     try {
       setLoading(true);
-
-      // Always fetch fresh items
       const itemsRes = await fetch(`${API_BASE}/api/items`);
-      if (!itemsRes.ok) throw new Error('Failed to load items');
+      if (!itemsRes.ok) throw new Error();
       const allItems = await itemsRes.json();
       setItems(allItems);
 
-      // Fetch matches for all items in parallel
       const matchResults = await Promise.all(
-        allItems.map(async (item) => {
+        allItems.map(async item => {
           const res = await fetch(`${API_BASE}/api/matches/${item.item_id}`);
           if (!res.ok) return [];
           const data = await res.json();
           return data
-            .filter(m => m.confidence_score >= 0.8)
+            .filter(m => m.confidence_score >= 0.50)
             .map(m => ({ ...m, sourceItem: item }));
         })
       );
 
-      // Flatten and deduplicate by match_id
       const seen = new Set();
       const deduped = matchResults.flat().filter(m => {
         if (seen.has(m.match_id)) return false;
         seen.add(m.match_id);
         return true;
       });
-
       setMatches(deduped);
     } catch {
       showNotification('Failed to load matches', 'error');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, [showNotification]);
 
   const validateForm = () => {
     const errors = {};
     if (!formData.title.trim()) errors.title = 'Title is required';
-    if (!formData.description.trim() || formData.description.length < 10) errors.description = 'Description must be at least 10 characters';
+    if (!formData.description.trim() || formData.description.length < 10)
+      errors.description = 'Description must be at least 10 characters';
     if (!formData.location.trim()) errors.location = 'Location is required';
-    if (!formData.contactEmail.trim()) errors.contactEmail = 'Email is required for match notifications';
-    if (formData.contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(formData.contactEmail)) errors.contactEmail = 'Enter a valid email address';
+    if (!formData.contactEmail.trim()) errors.contactEmail = 'Email is required';
+    if (formData.contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(formData.contactEmail))
+      errors.contactEmail = 'Enter a valid email address';
     if (!formData.image) errors.image = 'Photo is required';
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -558,6 +549,7 @@ const FindoraApp = () => {
 
   const handleSubmit = async () => {
     if (!validateForm()) { showNotification('Please fix the errors below', 'error'); return; }
+    if (!userId) { showNotification('Not registered yet — please wait a moment', 'error'); return; }
     try {
       setLoading(true);
       const contactInfo = formData.contactPhone.trim()
@@ -565,27 +557,34 @@ const FindoraApp = () => {
         : formData.contactEmail.trim();
 
       const data = new FormData();
-      data.append('title', formData.title.trim());
-      data.append('description', formData.description.trim());
-      data.append('category', formData.category);
-      data.append('location', formData.location.trim());
-      data.append('item_type', formData.itemType);
-      data.append('reward_amount', formData.rewardAmount);
-      data.append('contact_info', contactInfo);
-      data.append('user_id', userId);
-      data.append('image', formData.image);
-      if (formData.latitude) data.append('latitude', formData.latitude);
+      data.append('title',         formData.title.trim());
+      data.append('description',   formData.description.trim());
+      data.append('category',      formData.category);
+      data.append('location',      formData.location.trim());
+      data.append('item_type',     formData.itemType);
+      data.append('reward_amount', formData.rewardAmount || 0);
+      data.append('contact_info',  contactInfo);
+      data.append('user_id',       userId);
+      data.append('image',         formData.image);
+      if (formData.latitude)  data.append('latitude',  formData.latitude);
       if (formData.longitude) data.append('longitude', formData.longitude);
 
       const res = await fetch(`${API_BASE}/api/items/report`, { method: 'POST', body: data });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.detail || err.message || 'Submission failed'); }
-      showNotification('Item reported. Scanning for matches...', 'success');
-      setFormData({ title: '', description: '', category: 'wallet', location: '', latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0, contactEmail: '', contactPhone: '', image: null });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || err.message || `HTTP ${res.status}`);
+      }
+
+      showNotification('✅ Item reported! AI is scanning for matches...', 'success');
+      setFormData({ title: '', description: '', category: 'wallet', location: '',
+        latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0,
+        contactEmail: '', contactPhone: '', image: null });
       setPreviewUrl(null);
       setFormErrors({});
       setTimeout(() => setActiveTab('browse'), 1800);
-    } catch (err) { showNotification(err.message || 'Submission failed', 'error'); }
-    finally { setLoading(false); }
+    } catch (err) {
+      showNotification(err.message || 'Submission failed — backend may be starting up', 'error');
+    } finally { setLoading(false); }
   };
 
   const getLocation = () => {
@@ -612,13 +611,11 @@ const FindoraApp = () => {
         @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.55;transform:scale(.8)} }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes scanBar { 0%{width:0%} 100%{width:100%} }
         .tab-fade { animation: fadeUp 0.28s ease both; }
         button { cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; }
         input, textarea, select { font-family: inherit; font-size: inherit; outline: none; color: #0f172a; background: #ffffff; }
         input::placeholder, textarea::placeholder { color: #9aafc4 !important; }
         input:focus, textarea:focus, select:focus { border-color: #1e3a5f !important; box-shadow: 0 0 0 3px rgba(30,58,95,0.1); }
-        select option { color: #0f172a; background: #ffffff; }
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-track { background: #f0f2f5; }
         ::-webkit-scrollbar-thumb { background: #c5d0e0; border-radius: 10px; }
@@ -628,6 +625,12 @@ const FindoraApp = () => {
         <div style={{ ...s.notification, background: notification.type === 'success' ? '#1a4d33' : '#7f1d1d' }}>
           {notification.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
           <span>{notification.message}</span>
+        </div>
+      )}
+
+      {!backendOnline && (
+        <div style={s.offlineBanner}>
+          ⚠️ Backend is starting up (Render free tier) — please wait ~30 seconds and refresh
         </div>
       )}
 
@@ -677,8 +680,8 @@ const FindoraApp = () => {
           </div>
           <p style={s.footerTagline}>Intelligent Lost &amp; Found — Powered by AI</p>
           <div style={s.footerPillRow}>
-            <span style={s.footerPill}><Zap size={11} color="#7a9bbf" strokeWidth={1.5} style={{ marginRight: 5 }} />CNN Vision Encoder</span>
-            <span style={s.footerPill}><Search size={11} color="#7a9bbf" strokeWidth={1.5} style={{ marginRight: 5 }} />Semantic Text Matching</span>
+            <span style={s.footerPill}><Zap size={11} color="#7a9bbf" strokeWidth={1.5} style={{ marginRight: 5 }} />Keyword AI Matching</span>
+            <span style={s.footerPill}><Search size={11} color="#7a9bbf" strokeWidth={1.5} style={{ marginRight: 5 }} />Semantic Analysis</span>
             <span style={s.footerPill}><Shield size={11} color="#7a9bbf" strokeWidth={1.5} style={{ marginRight: 5 }} />Secure &amp; Private</span>
           </div>
           <div style={s.footerDivider} />
@@ -702,6 +705,7 @@ const FindoraApp = () => {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = {
   root: { fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#f0f2f5', color: '#0f172a' },
+  offlineBanner: { background: '#7f1d1d', color: '#fff', textAlign: 'center', padding: '10px 20px', fontSize: 13, fontWeight: 500 },
   header: { background: '#ffffff', borderBottom: '1px solid #dde3ed', position: 'sticky', top: 0, zIndex: 50 },
   headerInner: { maxWidth: 960, margin: '0 auto', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   logo: { display: 'flex', alignItems: 'center', gap: 10 },
@@ -782,7 +786,7 @@ const s = {
   contactHint: { fontSize: 11, color: '#9aafc4', marginTop: 4 },
   rewardWrap: { position: 'relative' },
   currencySymbol: { position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: '#9aafc4' },
-  uploadZone: { border: '1.5px dashed #c2cfe0', borderRadius: 11, padding: 26, textAlign: 'center', background: '#f8fafc', transition: 'border 0.15s' },
+  uploadZone: { border: '1.5px dashed #c2cfe0', borderRadius: 11, padding: 26, textAlign: 'center', background: '#f8fafc' },
   uploadZoneError: { borderColor: '#fca5a5', background: '#fff5f5' },
   uploadLabel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, cursor: 'pointer' },
   uploadText: { fontSize: 13, fontWeight: 500, color: '#2d4460' },
@@ -831,7 +835,7 @@ const s = {
   emptyTitle: { fontSize: 15, fontWeight: 600, color: '#2d4460' },
   emptyDesc: { fontSize: 13, color: '#7a8eaa', lineHeight: 1.6 },
   emptyBtn: { marginTop: 8, padding: '10px 22px', background: '#1e3a5f', color: '#fff', borderRadius: 9, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: 'none' },
-  notification: { position: 'fixed', top: 14, right: 14, zIndex: 999, color: '#fff', padding: '10px 16px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 500, animation: 'slideDown 0.25s ease', maxWidth: 320 },
+  notification: { position: 'fixed', top: 14, right: 14, zIndex: 999, color: '#fff', padding: '10px 16px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 500, animation: 'slideDown 0.25s ease', maxWidth: 340 },
   footer: { background: '#1e3a5f', marginTop: 20 },
   footerInner: { maxWidth: 960, margin: '0 auto', padding: '40px 20px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 },
   footerBrand: { display: 'flex', alignItems: 'center', gap: 10 },
