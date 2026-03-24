@@ -357,6 +357,9 @@ const BrowseTab = ({ items, loading, filterType, setFilterType, searchQuery, set
                   <span style={{ ...s.typeBadge, background: item.item_type === 'lost' ? '#1e3a5f' : '#1a4d33', color: '#ffffff' }}>
                     {item.item_type.toUpperCase()}
                   </span>
+                  {item.status === 'matched' && (
+                    <span style={s.matchedBadge}>✓ Matched</span>
+                  )}
                 </div>
                 <div style={s.itemBody}>
                   <p style={s.itemTitle}>{item.title}</p>
@@ -377,12 +380,19 @@ const BrowseTab = ({ items, loading, filterType, setFilterType, searchQuery, set
 };
 
 // ─── Matches Tab ──────────────────────────────────────────────────────────────
-const MatchesTab = ({ matches, loading, setActiveTab }) => (
+const MatchesTab = ({ matches, loading, setActiveTab, onRefresh }) => (
   <div style={s.page}>
-    <div style={s.pageHeader}>
-      <p style={s.heroEyebrow}>AI Results</p>
-      <h2 style={s.pageTitle}>Potential Matches</h2>
-      <p style={s.pageSub}>Showing matches with 80%+ confidence score.</p>
+    <div style={{ ...s.pageHeader, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+      <div>
+        <p style={s.heroEyebrow}>AI Results</p>
+        <h2 style={s.pageTitle}>Potential Matches</h2>
+        <p style={s.pageSub}>Showing matches with 80%+ confidence score. Auto-refreshes every 15s.</p>
+      </div>
+      <button onClick={onRefresh} disabled={loading}
+        style={{ marginTop: 6, padding: '8px 16px', background: '#1e3a5f', color: '#fff', borderRadius: 8, fontSize: 12, fontWeight: 600, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+        {loading ? <Spinner size={13} color="#fff" /> : <Activity size={13} color="#fff" />}
+        Refresh
+      </button>
     </div>
     {loading ? (
       <div style={s.loadingState}><Spinner size={28} color="#1e3a5f" /><span style={s.loadingText}>Analyzing matches...</span></div>
@@ -396,7 +406,7 @@ const MatchesTab = ({ matches, loading, setActiveTab }) => (
     ) : (
       <div style={s.matchGrid}>
         {matches.map((match, i) => (
-          <div key={i} style={s.matchCard}>
+          <div key={match.match_id || i} style={s.matchCard}>
             <div style={s.matchHeader}>
               <span style={s.matchLabel}>Match Found</span>
               <span style={{ ...s.matchScore, color: match.confidence_score >= 0.9 ? '#1a4d33' : '#1e3a5f' }}>
@@ -443,16 +453,30 @@ const FindoraApp = () => {
     contactEmail: '', contactPhone: '', image: null
   });
 
+  // ─── Auto-register user ───────────────────────────────────────────────────
   useEffect(() => { if (!userId) autoRegisterUser(); }, [userId]);
+
+  // ─── Tab switching data fetches ───────────────────────────────────────────
   useEffect(() => {
-    if (activeTab === 'browse') fetchItems();
-    if (activeTab === 'home') fetchStats();
+    if (activeTab === 'browse')  fetchItems();
+    if (activeTab === 'home')    fetchStats();
     if (activeTab === 'matches') fetchMatches();
+  }, [activeTab]);
+
+  // ─── Auto-poll matches every 15s while on Matches tab ────────────────────
+  useEffect(() => {
+    if (activeTab !== 'matches') return;
+    const interval = setInterval(fetchMatches, 15000);
+    return () => clearInterval(interval);
   }, [activeTab]);
 
   const autoRegisterUser = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/users/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `user${Date.now()}@findora.app`, name: 'User', phone: '' }) });
+      const res = await fetch(`${API_BASE}/api/users/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: `user${Date.now()}@findora.app`, name: 'User', phone: '' })
+      });
       if (!res.ok) throw new Error();
       const data = await res.json();
       setUserId(data.user_id);
@@ -466,29 +490,59 @@ const FindoraApp = () => {
   }, []);
 
   const fetchStats = async () => {
-    try { const res = await fetch(`${API_BASE}/api/stats`); if (res.ok) setStats(await res.json()); } catch {}
+    try {
+      const res = await fetch(`${API_BASE}/api/stats`);
+      if (res.ok) setStats(await res.json());
+    } catch {}
   };
 
   const fetchItems = async () => {
-    try { setLoading(true); const res = await fetch(`${API_BASE}/api/items`); if (res.ok) setItems(await res.json()); }
-    catch { showNotification('Failed to load items', 'error'); } finally { setLoading(false); }
-  };
-
-  const fetchMatches = async () => {
     try {
       setLoading(true);
-      const allMatches = [];
-      let itemsToCheck = items;
-      if (!items.length) { const res = await fetch(`${API_BASE}/api/items`); if (res.ok) { itemsToCheck = await res.json(); setItems(itemsToCheck); } }
-      for (const item of itemsToCheck) {
-        const res = await fetch(`${API_BASE}/api/matches/${item.item_id}`);
-        if (!res.ok) continue;
-        const data = await res.json();
-        allMatches.push(...data.filter(m => m.confidence_score >= 0.8).map(m => ({ ...m, sourceItem: item })));
-      }
-      setMatches(allMatches);
-    } catch { showNotification('Failed to load matches', 'error'); } finally { setLoading(false); }
+      const res = await fetch(`${API_BASE}/api/items`);
+      if (res.ok) setItems(await res.json());
+    } catch { showNotification('Failed to load items', 'error'); }
+    finally { setLoading(false); }
   };
+
+  // ✅ FIXED: parallel fetches + deduplication by match_id
+  const fetchMatches = useCallback(async () => {
+    try {
+      setLoading(true);
+
+      // Always fetch fresh items
+      const itemsRes = await fetch(`${API_BASE}/api/items`);
+      if (!itemsRes.ok) throw new Error('Failed to load items');
+      const allItems = await itemsRes.json();
+      setItems(allItems);
+
+      // Fetch matches for all items in parallel
+      const matchResults = await Promise.all(
+        allItems.map(async (item) => {
+          const res = await fetch(`${API_BASE}/api/matches/${item.item_id}`);
+          if (!res.ok) return [];
+          const data = await res.json();
+          return data
+            .filter(m => m.confidence_score >= 0.8)
+            .map(m => ({ ...m, sourceItem: item }));
+        })
+      );
+
+      // Flatten and deduplicate by match_id
+      const seen = new Set();
+      const deduped = matchResults.flat().filter(m => {
+        if (seen.has(m.match_id)) return false;
+        seen.add(m.match_id);
+        return true;
+      });
+
+      setMatches(deduped);
+    } catch {
+      showNotification('Failed to load matches', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [showNotification]);
 
   const validateForm = () => {
     const errors = {};
@@ -506,7 +560,6 @@ const FindoraApp = () => {
     if (!validateForm()) { showNotification('Please fix the errors below', 'error'); return; }
     try {
       setLoading(true);
-      // Build contact_info: email + phone if provided
       const contactInfo = formData.contactPhone.trim()
         ? `${formData.contactEmail.trim()} | ${formData.contactPhone.trim()}`
         : formData.contactEmail.trim();
@@ -525,19 +578,25 @@ const FindoraApp = () => {
       if (formData.longitude) data.append('longitude', formData.longitude);
 
       const res = await fetch(`${API_BASE}/api/items/report`, { method: 'POST', body: data });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.message || 'Submission failed'); }
+      if (!res.ok) { const err = await res.json(); throw new Error(err.detail || err.message || 'Submission failed'); }
       showNotification('Item reported. Scanning for matches...', 'success');
       setFormData({ title: '', description: '', category: 'wallet', location: '', latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0, contactEmail: '', contactPhone: '', image: null });
-      setPreviewUrl(null); setFormErrors({});
+      setPreviewUrl(null);
+      setFormErrors({});
       setTimeout(() => setActiveTab('browse'), 1800);
-    } catch (err) { showNotification(err.message || 'Submission failed', 'error'); } finally { setLoading(false); }
+    } catch (err) { showNotification(err.message || 'Submission failed', 'error'); }
+    finally { setLoading(false); }
   };
 
   const getLocation = () => {
     if (!navigator.geolocation) { showNotification('Geolocation not supported', 'error'); return; }
     setLoading(true);
     navigator.geolocation.getCurrentPosition(
-      pos => { setFormData(f => ({ ...f, latitude: pos.coords.latitude, longitude: pos.coords.longitude })); showNotification('Location captured', 'success'); setLoading(false); },
+      pos => {
+        setFormData(f => ({ ...f, latitude: pos.coords.latitude, longitude: pos.coords.longitude }));
+        showNotification('Location captured', 'success');
+        setLoading(false);
+      },
       () => { showNotification('Could not get location', 'error'); setLoading(false); },
       { timeout: 10000, enableHighAccuracy: true }
     );
@@ -580,14 +639,19 @@ const FindoraApp = () => {
           </div>
           <button style={s.bellBtn}>
             <Bell size={17} strokeWidth={1.5} color="#4a6080" />
-            <span style={s.bellDot} />
+            {matches.length > 0 && <span style={s.bellDot} />}
           </button>
         </div>
       </header>
 
       <nav style={s.nav}>
         <div style={s.navInner}>
-          {[{ id: 'home', label: 'Home' }, { id: 'report', label: 'Report' }, { id: 'browse', label: 'Browse' }, { id: 'matches', label: 'Matches' }].map(tab => (
+          {[
+            { id: 'home',    label: 'Home' },
+            { id: 'report',  label: 'Report' },
+            { id: 'browse',  label: 'Browse' },
+            { id: 'matches', label: `Matches${matches.length > 0 ? ` (${matches.length})` : ''}` },
+          ].map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               style={{ ...s.navBtn, color: activeTab === tab.id ? '#1e3a5f' : '#7a8eaa', borderBottom: `2px solid ${activeTab === tab.id ? '#1e3a5f' : 'transparent'}`, fontWeight: activeTab === tab.id ? 600 : 500 }}>
               {tab.label}
@@ -598,10 +662,10 @@ const FindoraApp = () => {
 
       <main style={s.main}>
         <div className="tab-fade" key={activeTab}>
-          {activeTab === 'home' && <HomeTab stats={stats} activeCTA={activeCTA} setActiveCTA={setActiveCTA} setFormData={setFormData} setActiveTab={setActiveTab} />}
-          {activeTab === 'report' && <ReportTab formData={formData} setFormData={setFormData} formErrors={formErrors} setFormErrors={setFormErrors} previewUrl={previewUrl} setPreviewUrl={setPreviewUrl} loading={loading} handleSubmit={handleSubmit} getLocation={getLocation} showNotification={showNotification} />}
-          {activeTab === 'browse' && <BrowseTab items={items} loading={loading} filterType={filterType} setFilterType={setFilterType} searchQuery={searchQuery} setSearchQuery={setSearchQuery} setActiveTab={setActiveTab} />}
-          {activeTab === 'matches' && <MatchesTab matches={matches} loading={loading} setActiveTab={setActiveTab} />}
+          {activeTab === 'home'    && <HomeTab stats={stats} activeCTA={activeCTA} setActiveCTA={setActiveCTA} setFormData={setFormData} setActiveTab={setActiveTab} />}
+          {activeTab === 'report'  && <ReportTab formData={formData} setFormData={setFormData} formErrors={formErrors} setFormErrors={setFormErrors} previewUrl={previewUrl} setPreviewUrl={setPreviewUrl} loading={loading} handleSubmit={handleSubmit} getLocation={getLocation} showNotification={showNotification} />}
+          {activeTab === 'browse'  && <BrowseTab items={items} loading={loading} filterType={filterType} setFilterType={setFilterType} searchQuery={searchQuery} setSearchQuery={setSearchQuery} setActiveTab={setActiveTab} />}
+          {activeTab === 'matches' && <MatchesTab matches={matches} loading={loading} setActiveTab={setActiveTab} onRefresh={fetchMatches} />}
         </div>
       </main>
 
@@ -635,6 +699,7 @@ const FindoraApp = () => {
   );
 };
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const s = {
   root: { fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#f0f2f5', color: '#0f172a' },
   header: { background: '#ffffff', borderBottom: '1px solid #dde3ed', position: 'sticky', top: 0, zIndex: 50 },
@@ -672,8 +737,6 @@ const s = {
   howStep: { fontFamily: "'DM Serif Display', serif", fontSize: 26, color: '#dde3ed', lineHeight: 1, flexShrink: 0, width: 38 },
   howTitle: { fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 3 },
   howDesc: { fontSize: 13, color: '#5c718a', lineHeight: 1.55 },
-
-  // ── Agent Section ──
   agentSection: { background: '#ffffff', border: '1px solid #dde3ed', borderRadius: 13, padding: '22px 20px', marginBottom: 18 },
   agentHeader: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 },
   agentDotWrap: { flexShrink: 0 },
@@ -696,7 +759,6 @@ const s = {
   agentNotifyIcon: { width: 28, height: 28, borderRadius: 8, background: '#1a4d33', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   agentNotifyTitle: { fontSize: 12.5, fontWeight: 600, color: '#ffffff', marginBottom: 2 },
   agentNotifySub: { fontSize: 11, color: '#7a9bbf' },
-
   badges: { display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 8 },
   badge: { fontSize: 12, color: '#4a6080', background: '#eef1f7', borderRadius: 20, padding: '5px 12px', fontWeight: 500 },
   toggle: { display: 'flex', background: '#eef1f7', borderRadius: 9, padding: 3, marginBottom: 22, gap: 3 },
@@ -714,13 +776,10 @@ const s = {
   locationRow: { display: 'flex', gap: 8 },
   gpsBtn: { flexShrink: 0, width: 42, height: 42, background: '#1e3a5f', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer' },
   gpsConfirm: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#1a4d33', fontWeight: 500, marginTop: 4 },
-
-  // ── Contact Section ──
   contactSection: { background: '#f8fafc', border: '1px solid #dde3ed', borderRadius: 11, padding: '16px' },
   contactSectionTitle: { fontSize: 12, fontWeight: 700, color: '#2d4460', marginBottom: 4, letterSpacing: '0.01em' },
   contactSectionSub: { fontSize: 11.5, color: '#5c718a', lineHeight: 1.6 },
   contactHint: { fontSize: 11, color: '#9aafc4', marginTop: 4 },
-
   rewardWrap: { position: 'relative' },
   currencySymbol: { position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: '#9aafc4' },
   uploadZone: { border: '1.5px dashed #c2cfe0', borderRadius: 11, padding: 26, textAlign: 'center', background: '#f8fafc', transition: 'border 0.15s' },
@@ -746,6 +805,7 @@ const s = {
   itemImage: { width: '100%', height: '100%', objectFit: 'cover' },
   itemImagePlaceholder: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   typeBadge: { position: 'absolute', top: 9, right: 9, fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', padding: '3px 8px', borderRadius: 5 },
+  matchedBadge: { position: 'absolute', bottom: 9, left: 9, fontSize: 10, fontWeight: 700, color: '#1a4d33', background: '#e8f2ec', border: '1px solid #b8ddc8', borderRadius: 5, padding: '3px 8px' },
   itemBody: { padding: '13px 15px' },
   itemTitle: { fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 5 },
   itemDesc: { fontSize: 12.5, color: '#5c718a', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: 9 },

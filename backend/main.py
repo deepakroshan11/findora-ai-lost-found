@@ -36,12 +36,12 @@ app = FastAPI(
 )
 
 # ======================================================
-# CORS — TEMP FIX FOR PRODUCTION (VERY IMPORTANT)
+# CORS
 # ======================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # 🔥 FIX: allows all origins
-    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -51,7 +51,6 @@ app.add_middleware(
 # ======================================================
 BASE_DIR = os.path.dirname(__file__)
 
-# On Render: use /data (persistent disk). Locally: use backend/storage
 if os.path.exists("/data"):
     STORAGE_DIR = "/data/storage"
 else:
@@ -69,10 +68,8 @@ def save_image(file: UploadFile, item_id: str) -> str:
     ext = file.filename.split(".")[-1]
     filename = f"{item_id}.{ext}"
     path = os.path.join(IMAGES_DIR, filename)
-
     with open(path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-
     return f"/storage/images/{filename}"
 
 # ======================================================
@@ -136,7 +133,6 @@ async def report_item(
 
     item_id = str(uuid.uuid4())
     ts = datetime.utcnow().isoformat()
-
     image_path = save_image(image, item_id)
 
     item = {
@@ -163,11 +159,12 @@ async def report_item(
     background_tasks.add_task(trigger_ai_processing, item_id)
     return ItemResponse(**item)
 
+
 @app.get("/api/items", response_model=List[ItemResponse])
 async def list_items(
     item_type: Optional[str] = None,
     category: Optional[str] = None,
-    status: str = "active",
+    status: Optional[str] = None,   # ✅ None = active + matched (Browse shows all)
     limit: int = 50
 ):
     items = db.get_all_items(item_type=item_type, status=status, limit=limit)
@@ -180,6 +177,7 @@ async def list_items(
         i.pop("text_embedding", None)
 
     return [ItemResponse(**i) for i in items]
+
 
 @app.get("/api/items/{item_id}", response_model=ItemResponse)
 async def get_item(item_id: str):
@@ -201,69 +199,89 @@ async def get_matches(item_id: str):
     return [MatchResponse(**m) for m in matches]
 
 # ======================================================
-# STATS
+# STATS  ✅ FIX: status=None so matched items are counted
 # ======================================================
 @app.get("/api/stats")
 async def get_stats():
     try:
-        items = db.get_all_items(status="active", limit=1000)
-        lost = sum(1 for i in items if i.get("item_type") == "lost")
-        found = sum(1 for i in items if i.get("item_type") == "found")
-        matched = sum(1 for i in items if i.get("status") == "matched")
+        all_items = db.get_all_items(status=None, limit=1000)
+        lost    = sum(1 for i in all_items if i.get("item_type") == "lost")
+        found   = sum(1 for i in all_items if i.get("item_type") == "found")
+        matched = sum(1 for i in all_items if i.get("status") == "matched")
         return {
-            "total_items": len(items),
-            "lost_items": lost,
-            "found_items": found,
-            "matched_items": matched
+            "total_items":   len(all_items),
+            "lost_items":    lost,
+            "found_items":   found,
+            "matched_items": matched,
         }
     except Exception as e:
         print("❌ Stats error:", e)
         raise HTTPException(status_code=500, detail="Stats calculation failed")
 
 # ======================================================
-# BACKGROUND
+# BACKGROUND — AI MATCHING ENGINE
+# ✅ FIXES:
+#   - Correct DB column names: lost_item_id / found_item_id
+#   - Targeted update_item calls (don't wipe image_features)
+#   - Only match lost ↔ found, never same type
+#   - Duplicate match guard via match_exists
 # ======================================================
 async def trigger_ai_processing(item_id: str):
     print(f"🤖 AI processing started for item: {item_id}")
 
     item = db.get_item(item_id)
     if not item:
+        print(f"❌ Item not found: {item_id}")
         return
 
-    all_items = db.get_all_items()
+    # Only compare against active items to avoid re-matching
+    all_items = db.get_all_items(status="active", limit=1000)
 
     for other in all_items:
+        # Skip self
         if other["item_id"] == item_id:
             continue
 
-        # Match condition (title match)
-        if item["title"].lower() == other["title"].lower():
-            print("🔥 MATCH FOUND!")
+        # ✅ Only match lost ↔ found
+        if item["item_type"] == other["item_type"]:
+            continue
 
-            # ✅ UPDATE STATUS (IMPORTANT)
-            item["status"] = "matched"
-            other["status"] = "matched"
+        # Match condition: exact title match (case-insensitive)
+        if item["title"].strip().lower() == other["title"].strip().lower():
+            print(f"🔥 MATCH FOUND! '{item['title']}' ↔ '{other['title']}'")
 
-            db.update_item(item["item_id"], item)
-            db.update_item(other["item_id"], other)
+            # Determine which is lost and which is found
+            lost_i  = item  if item["item_type"]  == "lost" else other
+            found_i = other if item["item_type"]  == "lost" else item
 
-            # ✅ STORE MATCH (IMPORTANT for /matches API)
+            # ✅ Targeted status update — preserves image_features/text_embedding
+            db.update_item(lost_i["item_id"],  {"status": "matched"})
+            db.update_item(found_i["item_id"], {"status": "matched"})
+
+            ts = datetime.utcnow().isoformat()
+
+            # ✅ Correct column names matching database.py schema
             match_data = {
-                "match_id": str(uuid.uuid4()),
-                "item1_id": item["item_id"],
-                "item2_id": other["item_id"],
+                "match_id":         str(uuid.uuid4()),
+                "lost_item_id":     lost_i["item_id"],
+                "found_item_id":    found_i["item_id"],
                 "confidence_score": 0.85,
-                "created_at": datetime.utcnow().isoformat()
+                "image_similarity": 0.85,
+                "text_similarity":  0.85,
+                "location_score":   0.85,
+                "status":           "pending",
+                "created_at":       ts,
+                "updated_at":       ts,
             }
 
-            db.insert_match(match_data)
-
-            # ✅ SEND EMAIL
-            if item["item_type"] == "lost":
-                notify_match(item, other, 0.85)
+            inserted = db.insert_match(match_data)
+            if inserted:
+                print(f"✅ Match stored in DB: {match_data['match_id']}")
             else:
-                notify_match(other, item, 0.85)
+                print("⚠️  Match already exists in DB, skipping insert")
 
+            # ✅ Notify both parties via email
+            notify_match(lost_i, found_i, 0.85)
             print("📦 Match saved + notification triggered")
 
 # ======================================================
