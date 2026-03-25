@@ -1,7 +1,6 @@
 """
 Findora Database — PostgreSQL (Supabase)
-Replaces SQLite so data persists across Render restarts.
-All queries use %s placeholders (psycopg2 style).
+FIXED: Uses IPv4 pooler URL compatible with Render free tier
 """
 
 import psycopg2
@@ -11,23 +10,46 @@ import os
 from datetime import datetime
 from typing import List, Dict, Optional
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+def _connect():
+    """Connect to Supabase — strips sslmode from URL if present, adds it as kwarg."""
+    url = DATABASE_URL
+    # Remove ?sslmode=... from URL if present (psycopg2 handles it as kwarg)
+    if "?sslmode" in url:
+        url = url.split("?sslmode")[0]
+    if "?ssl" in url:
+        url = url.split("?ssl")[0]
+    try:
+        conn = psycopg2.connect(url, sslmode="require")
+        conn.autocommit = False
+        return conn
+    except Exception:
+        # Fallback: try without sslmode (some poolers don't need it)
+        conn = psycopg2.connect(url)
+        conn.autocommit = False
+        return conn
 
 
 class Database:
 
     def __init__(self):
-        self.conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-        self.conn.autocommit = False
+        if not DATABASE_URL:
+            raise ValueError("DATABASE_URL environment variable not set")
+        print(f"🔌 Connecting to database...")
+        self.conn = _connect()
         self.create_tables()
         print("✅ PostgreSQL connected (Supabase)")
 
     def _cursor(self):
-        """Return a RealDictCursor, reconnecting if the connection dropped."""
+        """Return a RealDictCursor, reconnecting if connection dropped."""
         try:
-            self.conn.isolation_level  # raises if dead
+            # Check if connection is alive
+            self.conn.isolation_level
         except Exception:
-            self.conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+            print("🔄 Reconnecting to database...")
+            self.conn = _connect()
         return self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     def create_tables(self):
@@ -129,15 +151,11 @@ class Database:
         return item
 
     def get_all_items(self, item_type=None, status="active", limit=50) -> List[Dict]:
-        """
-        status=None    → return ALL items (active + matched + any other)
-        status="active"  → only active
-        status="matched" → only matched
-        """
+        """status=None → ALL items; status='active' → only active; etc."""
         cur = self._cursor()
         if status is None:
-            query: str  = "SELECT * FROM items WHERE 1=1"
-            params: list = []
+            query  = "SELECT * FROM items WHERE 1=1"
+            params = []
         else:
             query  = "SELECT * FROM items WHERE status = %s"
             params = [status]
@@ -163,23 +181,26 @@ class Database:
         return result
 
     def update_item(self, item_id: str, updates: Dict) -> bool:
-        updates["updated_at"] = datetime.utcnow().isoformat()
-        cur    = self._cursor()
-        keys   = ", ".join([f"{k}=%s" for k in updates.keys()])
-        values = list(updates.values()) + [item_id]
-        cur.execute(f"UPDATE items SET {keys} WHERE item_id = %s", values)
-        self.conn.commit()
-        return True
+        try:
+            updates["updated_at"] = datetime.utcnow().isoformat()
+            cur    = self._cursor()
+            keys   = ", ".join([f"{k}=%s" for k in updates.keys()])
+            values = list(updates.values()) + [item_id]
+            cur.execute(f"UPDATE items SET {keys} WHERE item_id = %s", values)
+            self.conn.commit()
+            return True
+        except Exception as e:
+            self.conn.rollback()
+            print(f"❌ Error updating item: {e}")
+            return False
 
     def get_items_without_features(self, limit: int = 10) -> List[Dict]:
-        """Used by the AI agent to find items needing feature extraction."""
         cur = self._cursor()
         cur.execute("""
             SELECT * FROM items
             WHERE status = 'active'
               AND (image_features IS NULL OR text_embedding IS NULL)
-            ORDER BY created_at ASC
-            LIMIT %s
+            ORDER BY created_at ASC LIMIT %s
         """, (limit,))
         items = []
         for row in cur.fetchall():
@@ -194,29 +215,26 @@ class Database:
         return items
 
     def update_item_features(self, item_id: str, image_features, text_embedding) -> bool:
-        cur = self._cursor()
-        cur.execute("""
-            UPDATE items
-               SET image_features = %s,
-                   text_embedding  = %s,
-                   updated_at      = %s
-             WHERE item_id = %s
-        """, (
-            json.dumps(image_features),
-            json.dumps(text_embedding),
-            datetime.utcnow().isoformat(),
-            item_id,
-        ))
-        self.conn.commit()
-        return True
+        try:
+            cur = self._cursor()
+            cur.execute("""
+                UPDATE items SET image_features=%s, text_embedding=%s, updated_at=%s
+                WHERE item_id=%s
+            """, (json.dumps(image_features), json.dumps(text_embedding),
+                  datetime.utcnow().isoformat(), item_id))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            self.conn.rollback()
+            print(f"❌ Error updating features: {e}")
+            return False
 
     # ── Matches ───────────────────────────────────────────────────────────────
 
     def match_exists(self, lost_item_id: str, found_item_id: str) -> bool:
         cur = self._cursor()
         cur.execute("""
-            SELECT 1 FROM matches
-             WHERE lost_item_id = %s AND found_item_id = %s
+            SELECT 1 FROM matches WHERE lost_item_id=%s AND found_item_id=%s
         """, (lost_item_id, found_item_id))
         return cur.fetchone() is not None
 
@@ -249,8 +267,8 @@ class Database:
         cur = self._cursor()
         cur.execute("""
             SELECT * FROM matches
-             WHERE lost_item_id = %s OR found_item_id = %s
-             ORDER BY confidence_score DESC
+            WHERE lost_item_id=%s OR found_item_id=%s
+            ORDER BY confidence_score DESC
         """, (item_id, item_id))
         return [dict(row) for row in cur.fetchall()]
 
@@ -275,7 +293,7 @@ class Database:
 
     def get_user(self, user_id: str) -> Optional[Dict]:
         cur = self._cursor()
-        cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        cur.execute("SELECT * FROM users WHERE user_id=%s", (user_id,))
         row = cur.fetchone()
         return dict(row) if row else None
 
