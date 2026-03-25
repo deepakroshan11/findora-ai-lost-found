@@ -13,23 +13,35 @@ from typing import List, Dict, Optional
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 
-def _connect():
-    """Connect to Supabase — strips sslmode from URL if present, adds it as kwarg."""
-    url = DATABASE_URL
-    # Remove ?sslmode=... from URL if present (psycopg2 handles it as kwarg)
-    if "?sslmode" in url:
-        url = url.split("?sslmode")[0]
-    if "?ssl" in url:
-        url = url.split("?ssl")[0]
+def _clean_url(url: str) -> str:
+    """Strip sslmode/ssl query params from URL — psycopg2 takes them as kwargs."""
+    for param in ("?sslmode", "&sslmode", "?ssl", "&ssl"):
+        if param in url:
+            url = url.split(param)[0]
+    return url
+
+
+def _connect() -> psycopg2.extensions.connection:
+    """Open a new connection to Supabase via IPv4 pooler."""
+    url = _clean_url(DATABASE_URL)
     try:
         conn = psycopg2.connect(url, sslmode="require")
-        conn.autocommit = False
-        return conn
-    except Exception:
-        # Fallback: try without sslmode (some poolers don't need it)
+    except psycopg2.OperationalError:
+        # Some poolers terminate SSL at the proxy — try without
         conn = psycopg2.connect(url)
-        conn.autocommit = False
-        return conn
+    conn.autocommit = False
+    return conn
+
+
+def _is_alive(conn) -> bool:
+    """Return True if the connection is open and responsive."""
+    if conn is None or conn.closed:
+        return False
+    try:
+        conn.cursor().execute("SELECT 1")
+        return True
+    except Exception:
+        return False
 
 
 class Database:
@@ -37,40 +49,43 @@ class Database:
     def __init__(self):
         if not DATABASE_URL:
             raise ValueError("DATABASE_URL environment variable not set")
-        print(f"🔌 Connecting to database...")
+        print("🔌 Connecting to database...")
         self.conn = _connect()
         self.create_tables()
         print("✅ PostgreSQL connected (Supabase)")
 
-    def _cursor(self):
-        """Return a RealDictCursor, reconnecting if connection dropped."""
-        try:
-            # Check if connection is alive
-            self.conn.isolation_level
-        except Exception:
+    def _cursor(self) -> psycopg2.extras.RealDictCursor:
+        """Return a RealDictCursor, reconnecting if the connection has dropped."""
+        if not _is_alive(self.conn):
             print("🔄 Reconnecting to database...")
+            try:
+                self.conn.close()
+            except Exception:
+                pass
             self.conn = _connect()
         return self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    # ── Schema ────────────────────────────────────────────────────────────────
 
     def create_tables(self):
         cur = self._cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS items (
-                item_id       TEXT PRIMARY KEY,
-                user_id       TEXT NOT NULL,
-                title         TEXT NOT NULL,
-                description   TEXT NOT NULL,
-                category      TEXT NOT NULL,
-                location      TEXT NOT NULL,
-                latitude      REAL,
-                longitude     REAL,
-                item_type     TEXT NOT NULL,
-                reward_amount REAL DEFAULT 0,
-                contact_info  TEXT NOT NULL,
-                image_path    TEXT,
-                status        TEXT DEFAULT 'active',
-                created_at    TEXT NOT NULL,
-                updated_at    TEXT NOT NULL,
+                item_id        TEXT PRIMARY KEY,
+                user_id        TEXT NOT NULL,
+                title          TEXT NOT NULL,
+                description    TEXT NOT NULL,
+                category       TEXT NOT NULL,
+                location       TEXT NOT NULL,
+                latitude       REAL,
+                longitude      REAL,
+                item_type      TEXT NOT NULL,
+                reward_amount  REAL DEFAULT 0,
+                contact_info   TEXT NOT NULL,
+                image_path     TEXT,
+                status         TEXT DEFAULT 'active',
+                created_at     TEXT NOT NULL,
+                updated_at     TEXT NOT NULL,
                 image_features TEXT,
                 text_embedding TEXT
             )
@@ -105,6 +120,18 @@ class Database:
         self.conn.commit()
         print("✅ Database tables ready")
 
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_json_fields(item: Dict) -> Dict:
+        for field in ("image_features", "text_embedding"):
+            if item.get(field):
+                try:
+                    item[field] = json.loads(item[field])
+                except Exception:
+                    item[field] = None
+        return item
+
     # ── Items ─────────────────────────────────────────────────────────────────
 
     def insert_item(self, item: Dict) -> bool:
@@ -118,15 +145,15 @@ class Database:
                     image_features, text_embedding
                 ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (
-                item['item_id'], item['user_id'], item['title'],
-                item['description'], item['category'], item['location'],
-                item.get('latitude'), item.get('longitude'),
-                item['item_type'], item.get('reward_amount', 0),
-                item['contact_info'], item.get('image_path'),
-                item.get('status', 'active'),
-                item['created_at'], item['updated_at'],
-                json.dumps(item['image_features']) if item.get('image_features') else None,
-                json.dumps(item['text_embedding']) if item.get('text_embedding') else None,
+                item["item_id"],   item["user_id"],    item["title"],
+                item["description"], item["category"], item["location"],
+                item.get("latitude"), item.get("longitude"),
+                item["item_type"],    item.get("reward_amount", 0),
+                item["contact_info"], item.get("image_path"),
+                item.get("status", "active"),
+                item["created_at"],   item["updated_at"],
+                json.dumps(item["image_features"]) if item.get("image_features") else None,
+                json.dumps(item["text_embedding"]) if item.get("text_embedding") else None,
             ))
             self.conn.commit()
             return True
@@ -139,26 +166,15 @@ class Database:
         cur = self._cursor()
         cur.execute("SELECT * FROM items WHERE item_id = %s", (item_id,))
         row = cur.fetchone()
-        if not row:
-            return None
-        item = dict(row)
-        for f in ("image_features", "text_embedding"):
-            if item.get(f):
-                try:
-                    item[f] = json.loads(item[f])
-                except Exception:
-                    item[f] = None
-        return item
+        return self._parse_json_fields(dict(row)) if row else None
 
     def get_all_items(self, item_type=None, status="active", limit=50) -> List[Dict]:
-        """status=None → ALL items; status='active' → only active; etc."""
+        """status=None → all items; status='active' → only active; etc."""
         cur = self._cursor()
         if status is None:
-            query  = "SELECT * FROM items WHERE 1=1"
-            params = []
+            query, params = "SELECT * FROM items WHERE 1=1", []
         else:
-            query  = "SELECT * FROM items WHERE status = %s"
-            params = [status]
+            query, params = "SELECT * FROM items WHERE status = %s", [status]
 
         if item_type:
             query += " AND item_type = %s"
@@ -167,24 +183,13 @@ class Database:
         query += " ORDER BY created_at DESC LIMIT %s"
         params.append(limit)
         cur.execute(query, params)
-
-        result = []
-        for row in cur.fetchall():
-            item = dict(row)
-            for f in ("image_features", "text_embedding"):
-                if item.get(f):
-                    try:
-                        item[f] = json.loads(item[f])
-                    except Exception:
-                        item[f] = None
-            result.append(item)
-        return result
+        return [self._parse_json_fields(dict(row)) for row in cur.fetchall()]
 
     def update_item(self, item_id: str, updates: Dict) -> bool:
         try:
             updates["updated_at"] = datetime.utcnow().isoformat()
             cur    = self._cursor()
-            keys   = ", ".join([f"{k}=%s" for k in updates.keys()])
+            keys   = ", ".join(f"{k}=%s" for k in updates)
             values = list(updates.values()) + [item_id]
             cur.execute(f"UPDATE items SET {keys} WHERE item_id = %s", values)
             self.conn.commit()
@@ -202,26 +207,19 @@ class Database:
               AND (image_features IS NULL OR text_embedding IS NULL)
             ORDER BY created_at ASC LIMIT %s
         """, (limit,))
-        items = []
-        for row in cur.fetchall():
-            item = dict(row)
-            for f in ("image_features", "text_embedding"):
-                if item.get(f):
-                    try:
-                        item[f] = json.loads(item[f])
-                    except Exception:
-                        item[f] = None
-            items.append(item)
-        return items
+        return [self._parse_json_fields(dict(row)) for row in cur.fetchall()]
 
     def update_item_features(self, item_id: str, image_features, text_embedding) -> bool:
         try:
             cur = self._cursor()
             cur.execute("""
-                UPDATE items SET image_features=%s, text_embedding=%s, updated_at=%s
+                UPDATE items
+                SET image_features=%s, text_embedding=%s, updated_at=%s
                 WHERE item_id=%s
-            """, (json.dumps(image_features), json.dumps(text_embedding),
-                  datetime.utcnow().isoformat(), item_id))
+            """, (
+                json.dumps(image_features), json.dumps(text_embedding),
+                datetime.utcnow().isoformat(), item_id,
+            ))
             self.conn.commit()
             return True
         except Exception as e:
@@ -298,7 +296,10 @@ class Database:
         return dict(row) if row else None
 
     def close(self):
-        self.conn.close()
+        try:
+            self.conn.close()
+        except Exception:
+            pass
 
 
 db = Database()
