@@ -1,13 +1,15 @@
 """
-FINDORA - Production AI Engine v4
-- Image matching  : CLIP (clip-vit-base-patch32) via transformers — ~380MB RAM
-- Text matching   : sentence-transformers (all-MiniLM-L6-v2) — already in requirements
-- NO TensorFlow   : runs fine on Render free tier (512MB)
-- Cloudinary URLs : downloaded on-the-fly for feature extraction
+FINDORA - Production AI Engine v2
+FIXES vs original:
+  - extract_image_features() now accepts Cloudinary https:// URLs
+    → downloads the image to a temp file, then extracts features
+  - No Lambda layers (uses L2Norm Keras subclass — fully serialisable)
+  - Saves model as .keras format
+  - AVIF-safe | Windows-safe | Render-ready
 """
 
 import os
-import io
+import json
 import tempfile
 import numpy as np
 from typing import List, Dict, Optional
@@ -15,111 +17,226 @@ from datetime import datetime
 
 
 # =========================================================
+# PATH RESOLVERS  (local dev uses ./storage, Render uses /data)
+# =========================================================
+def get_models_dir():
+    if os.path.exists("/data"):
+        return "/data/storage/models/findora_production"
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "storage", "models", "findora_production")
+    )
+
+def get_images_dir():
+    if os.path.exists("/data"):
+        return "/data/storage/images"
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "storage", "images")
+    )
+
+
+# =========================================================
 # PRODUCTION AI ENGINE
 # =========================================================
 class ProductionAIEngine:
 
-    def __init__(self):
-        self.clip_model      = None
-        self.clip_processor  = None
-        self.text_model      = None
-        self._loaded         = False
+    def __init__(self, models_dir: str = None):
+        if models_dir is None:
+            models_dir = get_models_dir()
 
-        print("🚀 Initialising Production AI Engine (CLIP + SentenceTransformers)...")
+        self.models_dir = models_dir
+        self.images_dir = get_images_dir()
+        self.vision_model = None
+        self.text_model   = None
+
+        print("🚀 Initialising Production AI Engine...")
+        print(f"   Models dir : {self.models_dir}")
+        print(f"   Images dir : {self.images_dir}")
         self._load_models()
 
-    # ─────────────────────────────────────────────────────
+    # =====================================================
     # MODEL LOADING
-    # ─────────────────────────────────────────────────────
+    # =====================================================
     def _load_models(self):
-        # ── CLIP for image (and cross-modal) similarity ───────────────────
-        try:
-            from transformers import CLIPProcessor, CLIPModel
-            print("   📥 Loading CLIP model (first run downloads ~600MB, cached after)...")
-            self.clip_model     = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-            self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-            self.clip_model.eval()
-            print("   ✅ CLIP loaded")
-        except Exception as e:
-            print(f"   ❌ CLIP load failed: {e}")
-            self.clip_model = None
+        keras_path = os.path.join(self.models_dir, "vision_encoder.keras")
+        h5_path    = os.path.join(self.models_dir, "vision_encoder.h5")
 
-        # ── SentenceTransformers for pure text similarity ─────────────────
+        if os.path.exists(keras_path):
+            try:
+                from tensorflow.keras.models import load_model
+                self.vision_model = load_model(keras_path, compile=False)
+                print("✅ Vision encoder loaded (.keras)")
+            except Exception as e:
+                print(f"⚠️  .keras load failed: {e} → rebuilding fallback")
+                self._init_fallback_vision()
+        elif os.path.exists(h5_path):
+            try:
+                from tensorflow.keras.models import load_model
+                self.vision_model = load_model(h5_path, compile=False)
+                print("✅ Vision encoder loaded (.h5)")
+            except Exception as e:
+                print(f"⚠️  .h5 load failed: {e} → rebuilding fallback")
+                self._init_fallback_vision()
+        else:
+            print("⚠️  No saved vision model → building fallback MobileNetV3")
+            self._init_fallback_vision()
+
         try:
             from sentence_transformers import SentenceTransformer
             self.text_model = SentenceTransformer("all-MiniLM-L6-v2")
-            print("   ✅ SentenceTransformer loaded")
+            print("✅ Text encoder loaded")
         except Exception as e:
-            print(f"   ❌ SentenceTransformer load failed: {e}")
-            self.text_model = None
+            print(f"❌ Text encoder failed: {e}")
+            raise
 
-        self._loaded = self.clip_model is not None or self.text_model is not None
-        if self._loaded:
-            print("✅ AI Engine ready")
-        else:
-            print("❌ AI Engine could not load any models — falling back to keyword matching")
+    # =====================================================
+    # FALLBACK VISION MODEL  (no Lambda — uses Keras subclass)
+    # =====================================================
+    def _init_fallback_vision(self):
+        import tensorflow as tf
+        from tensorflow.keras.applications import MobileNetV3Small
+        from tensorflow.keras.models import Model
+        from tensorflow.keras import layers
 
-    # ─────────────────────────────────────────────────────
-    # IMAGE HELPERS
-    # ─────────────────────────────────────────────────────
-    def _load_pil_image(self, image_path: str):
-        """Load a PIL Image from a Cloudinary URL or local path."""
-        from PIL import Image
+        class L2Norm(layers.Layer):
+            def call(self, x):
+                return tf.math.l2_normalize(x, axis=1)
 
-        if image_path.startswith("http://") or image_path.startswith("https://"):
-            import requests
-            resp = requests.get(image_path, timeout=15)
-            resp.raise_for_status()
-            return Image.open(io.BytesIO(resp.content)).convert("RGB")
+        base = MobileNetV3Small(include_top=False, weights="imagenet", pooling="avg")
+        out  = L2Norm()(base.output)
+        self.vision_model = Model(base.input, out, name="vision_encoder")
+        print("✅ Fallback MobileNetV3 vision model built")
 
-        # Local path
-        if not os.path.exists(image_path):
-            raise FileNotFoundError(f"Image not found: {image_path}")
-        return Image.open(image_path).convert("RGB")
-
-    # ─────────────────────────────────────────────────────
-    # FEATURE EXTRACTION
-    # ─────────────────────────────────────────────────────
-    def extract_image_features(self, image_path: str) -> Optional[np.ndarray]:
-        """Extract CLIP image embedding (512-d, L2-normalised)."""
-        if not image_path or self.clip_model is None:
-            return None
         try:
-            import torch
-            img    = self._load_pil_image(image_path)
-            inputs = self.clip_processor(images=img, return_tensors="pt")
-            with torch.no_grad():
-                feats = self.clip_model.get_image_features(**inputs)
-                feats = feats / feats.norm(dim=-1, keepdim=True)   # L2 normalise
-            return feats.squeeze().numpy()
+            os.makedirs(self.models_dir, exist_ok=True)
+            save_path = os.path.join(self.models_dir, "vision_encoder.keras")
+            self.vision_model.save(save_path)
+            print(f"✅ Vision model saved → {save_path}")
         except Exception as e:
-            print(f"   ❌ Image feature error ({image_path[:60]}…): {e}")
+            print(f"⚠️  Could not save vision model: {e}")
+
+    # =====================================================
+    # IMAGE FEATURES  — supports local paths AND https:// URLs
+    # =====================================================
+    def extract_image_features(self, image_path: str) -> Optional[np.ndarray]:
+        """
+        Accepts:
+          - Cloudinary https:// URL  → download to temp file, then extract
+          - Local /storage/images/UUID.ext path
+        """
+        if not image_path:
             return None
 
-    def extract_text_embedding(self, text: str) -> Optional[np.ndarray]:
-        """Extract SentenceTransformer embedding (384-d, L2-normalised)."""
-        if not text or self.text_model is None:
+        try:
+            from PIL import Image
+            from tensorflow.keras.preprocessing import image as keras_image
+            from tensorflow.keras.applications.mobilenet_v3 import preprocess_input
+
+            # ── Cloudinary / any remote URL ───────────────────────────────
+            if image_path.startswith("http://") or image_path.startswith("https://"):
+                return self._extract_from_url(image_path)
+
+            # ── Local file path ───────────────────────────────────────────
+            image_path = image_path.replace("\\", "/").lstrip("/")
+
+            if image_path.startswith("storage/"):
+                if os.path.exists("/data"):
+                    full_path = os.path.join("/data", image_path)
+                else:
+                    backend_dir = os.path.abspath(
+                        os.path.join(os.path.dirname(__file__), "..")
+                    )
+                    full_path = os.path.join(backend_dir, image_path)
+            else:
+                full_path = image_path
+
+            full_path = os.path.normpath(full_path)
+
+            if not os.path.exists(full_path):
+                print(f"❌ Image file not found: {full_path}")
+                return None
+
+            if full_path.lower().endswith(".avif"):
+                print(f"⚠️  AVIF skipped: {full_path}")
+                return None
+
+            return self._extract_from_pil(Image.open(full_path))
+
+        except Exception as e:
+            print(f"❌ Image feature error: {e}")
             return None
+
+    def _extract_from_url(self, url: str) -> Optional[np.ndarray]:
+        """Download image from URL to a temp file, then extract features."""
+        try:
+            import requests
+            from PIL import Image
+
+            print(f"   📥 Downloading image from URL: {url[:60]}...")
+            resp = requests.get(url, timeout=15, stream=True)
+            resp.raise_for_status()
+
+            # Write to temp file preserving extension
+            ext = url.split("?")[0].rsplit(".", 1)[-1].lower()
+            if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
+                ext = "jpg"
+
+            with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+                tmp_path = tmp.name
+                for chunk in resp.iter_content(chunk_size=8192):
+                    tmp.write(chunk)
+
+            try:
+                img     = Image.open(tmp_path)
+                features = self._extract_from_pil(img)
+                return features
+            finally:
+                os.unlink(tmp_path)   # always clean up
+
+        except Exception as e:
+            print(f"❌ URL image download error: {e}")
+            return None
+
+    def _extract_from_pil(self, img) -> Optional[np.ndarray]:
+        """Run MobileNetV3 on a PIL Image and return the feature vector."""
+        try:
+            from PIL import Image
+            from tensorflow.keras.preprocessing import image as keras_image
+            from tensorflow.keras.applications.mobilenet_v3 import preprocess_input
+
+            img = img.convert("RGB").resize((224, 224))
+            arr = keras_image.img_to_array(img)
+            arr = np.expand_dims(arr, axis=0)
+            arr = preprocess_input(arr)
+
+            features = self.vision_model.predict(arr, verbose=0)
+            return features.flatten()
+        except Exception as e:
+            print(f"❌ PIL feature extraction error: {e}")
+            return None
+
+    # =====================================================
+    # TEXT EMBEDDINGS
+    # =====================================================
+    def extract_text_embedding(self, text: str) -> Optional[np.ndarray]:
         try:
             text = " ".join(text.lower().split())
             emb  = self.text_model.encode(text, convert_to_numpy=True)
             norm = np.linalg.norm(emb)
             return emb / norm if norm > 0 else emb
         except Exception as e:
-            print(f"   ❌ Text embedding error: {e}")
+            print(f"❌ Text embedding error: {e}")
             return None
 
-    # ─────────────────────────────────────────────────────
-    # SCORING
-    # ─────────────────────────────────────────────────────
-    def _cosine(self, a: np.ndarray, b: np.ndarray) -> float:
-        """Cosine similarity mapped to [0, 1]."""
-        dot  = float(np.dot(a, b))
-        norm = float(np.linalg.norm(a) * np.linalg.norm(b))
-        raw  = dot / norm if norm > 0 else 0.0
-        return (raw + 1.0) / 2.0   # map [-1,1] → [0,1]
+    # =====================================================
+    # SCORING UTILITIES
+    # =====================================================
+    def cosine(self, a: np.ndarray, b: np.ndarray) -> float:
+        from sklearn.metrics.pairwise import cosine_similarity
+        return float(
+            (cosine_similarity(a.reshape(1, -1), b.reshape(1, -1))[0][0] + 1) / 2
+        )
 
-    def _location_score(self, lat1, lon1, lat2, lon2, max_km: float = 10) -> float:
+    def location_score(self, lat1, lon1, lat2, lon2, max_km: float = 10) -> float:
         if not all([lat1, lon1, lat2, lon2]):
             return 0.5
         from math import radians, sin, cos, sqrt, atan2
@@ -130,59 +247,58 @@ class ProductionAIEngine:
         dist = R * (2 * atan2(sqrt(a), sqrt(1 - a)))
         return 0.0 if dist > max_km else float(np.exp(-dist / (max_km / 3)))
 
-    # ─────────────────────────────────────────────────────
-    # MATCH SINGLE PAIR
-    # ─────────────────────────────────────────────────────
-    def match_items(self, item1: Dict, item2: Dict, threshold: float = 0.60) -> Dict:
+    # =====================================================
+    # SMART MATCH (single pair)
+    # =====================================================
+    def match_items(self, item1: Dict, item2: Dict, threshold: float = 0.6) -> Dict:
         image_sim = 0.0
         text_sim  = 0.0
 
-        # ── Image similarity (CLIP) ───────────────────────────────────────
-        f1, f2 = None, None
-
+        # Vision similarity
+        f1 = None
+        f2 = None
         if item1.get("image_features"):
             f1 = np.array(item1["image_features"])
         elif item1.get("image_path"):
-            f1 = self.extract_image_features(item1["image_path"])
+            raw = self.extract_image_features(item1["image_path"])
+            if raw is not None:
+                f1 = raw
 
         if item2.get("image_features"):
             f2 = np.array(item2["image_features"])
         elif item2.get("image_path"):
-            f2 = self.extract_image_features(item2["image_path"])
+            raw = self.extract_image_features(item2["image_path"])
+            if raw is not None:
+                f2 = raw
 
         if f1 is not None and f2 is not None:
-            image_sim = self._cosine(f1, f2)
+            image_sim = self.cosine(f1, f2)
 
-        # ── Text similarity (SentenceTransformers) ────────────────────────
-        e1, e2 = None, None
-
+        # Text similarity
+        e1 = None
+        e2 = None
         if item1.get("text_embedding"):
             e1 = np.array(item1["text_embedding"])
         else:
-            e1 = self.extract_text_embedding(
-                f"{item1.get('title','')} {item1.get('description','')}"
-            )
+            t1 = f"{item1.get('title','')} {item1.get('description','')}"
+            e1 = self.extract_text_embedding(t1)
 
         if item2.get("text_embedding"):
             e2 = np.array(item2["text_embedding"])
         else:
-            e2 = self.extract_text_embedding(
-                f"{item2.get('title','')} {item2.get('description','')}"
-            )
+            t2 = f"{item2.get('title','')} {item2.get('description','')}"
+            e2 = self.extract_text_embedding(t2)
 
         if e1 is not None and e2 is not None:
-            text_sim = self._cosine(e1, e2)
+            text_sim = self.cosine(e1, e2)
 
-        # ── Category bonus ────────────────────────────────────────────────
-        cat_bonus = 0.10 if item1.get("category") == item2.get("category") else -0.05
+        cat_boost = 0.10 if item1.get("category") == item2.get("category") else -0.05
 
-        # ── Location score ────────────────────────────────────────────────
-        loc = self._location_score(
+        loc = self.location_score(
             item1.get("latitude"),  item1.get("longitude"),
             item2.get("latitude"),  item2.get("longitude"),
         )
 
-        # ── Temporal score ────────────────────────────────────────────────
         time_score = 0.7
         if item1.get("created_at") and item2.get("created_at"):
             try:
@@ -194,13 +310,12 @@ class ProductionAIEngine:
             except Exception:
                 pass
 
-        # ── Final confidence ──────────────────────────────────────────────
         confidence = (
             image_sim  * 0.40 +
             text_sim   * 0.35 +
             loc        * 0.15 +
             time_score * 0.10 +
-            cat_bonus
+            cat_boost
         )
         confidence = max(0.0, min(confidence, 0.95))
 
@@ -213,15 +328,15 @@ class ProductionAIEngine:
             "temporal_score":   round(time_score,  3),
         }
 
-    # ─────────────────────────────────────────────────────
+    # =====================================================
     # BATCH MATCH
-    # ─────────────────────────────────────────────────────
+    # =====================================================
     def batch_match(
         self,
         query_item:      Dict,
         candidates:      Optional[List[Dict]] = None,
         candidate_items: Optional[List[Dict]] = None,
-        threshold:       float = 0.60,
+        threshold:       float = 0.6,
         top_k:           int   = 5,
     ) -> List[Dict]:
         if candidates is None:
@@ -237,9 +352,9 @@ class ProductionAIEngine:
         return matches[:top_k]
 
 
-# ─────────────────────────────────────────────────────────
+# =====================================================
 # SINGLETON
-# ─────────────────────────────────────────────────────────
+# =====================================================
 _engine: Optional[ProductionAIEngine] = None
 
 def get_ai_engine() -> ProductionAIEngine:
