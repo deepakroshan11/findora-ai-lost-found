@@ -10,21 +10,18 @@ psycopg2-binary==2.9.9
 # ── Image storage ──────────────────────────────────────────────────────────────
 cloudinary==1.36.0
 
-# ── AI / ML ────────────────────────────────────────────────────────────────────
+# ── AI / ML — CLIP replaces TensorFlow (runs in ~380MB RAM, fits Render free) ──
+transformers==4.37.2
+torch==2.1.2+cpu          # CPU-only build, much smaller (~700MB vs 2.5GB GPU)
 Pillow==10.1.0
 sentence-transformers==2.3.1
 numpy==1.26.4
-scipy==1.11.4
-scikit-learn==1.3.2
 huggingface-hub==0.19.4
 
-# ── HTTP client (for downloading Cloudinary images in AI engine) ───────────────
+# ── HTTP client (downloading Cloudinary images for AI engine) ──────────────────
 requests==2.31.0
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 python-dotenv==1.0.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
-
-# ── Email notifications ────────────────────────────────────────────────────────
-resend==0.8.0
