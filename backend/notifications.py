@@ -1,6 +1,6 @@
 """
 FINDORA - Notification Engine
-Gmail SMTP — images embedded as Base64 in email (works locally + cloud)
+Gmail SMTP — images downloaded from Cloudinary URL and embedded as Base64
 """
 
 import os
@@ -8,11 +8,12 @@ import re
 import smtplib
 import ssl
 import base64
+import urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from datetime import datetime
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -40,32 +41,15 @@ def is_valid_email(s: str) -> bool:
     return bool(re.match(r"[^@\s]+@[^@\s]+\.[^@\s]+", s.strip()))
 
 
-def resolve_image_path(image_path: str) -> Optional[str]:
-    """Resolve image_path to absolute local file path"""
-    if not image_path:
-        return None
-    image_path = image_path.replace("\\", "/").lstrip("/")
-
-    if os.path.exists("/data"):
-        full = os.path.join("/data", image_path)
-    else:
-        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__)))
-        full = os.path.join(backend_dir, image_path)
-
-    full = os.path.normpath(full)
-    return full if os.path.exists(full) else None
-
-
-def load_image_base64(image_path: str) -> Optional[Tuple[str, str, str]]:
+def load_image_from_url(url: str) -> Optional[Tuple[str, str, str]]:
     """
-    Returns (cid, base64_data, mime_type) or None
-    cid = content ID for embedding in HTML as cid:xxx
+    Download image from a URL (Cloudinary or any https://).
+    Returns (cid, base64_data, mime_type) or None on failure.
     """
-    full_path = resolve_image_path(image_path)
-    if not full_path:
+    if not url or not url.startswith("http"):
         return None
 
-    ext = full_path.lower().split(".")[-1]
+    ext = url.split("?")[0].split(".")[-1].lower()
     if ext in ("jpg", "jpeg"):
         mime = "image/jpeg"
     elif ext == "png":
@@ -73,15 +57,18 @@ def load_image_base64(image_path: str) -> Optional[Tuple[str, str, str]]:
     elif ext == "webp":
         mime = "image/webp"
     else:
-        return None
+        mime = "image/jpeg"   # Cloudinary default
 
     try:
-        with open(full_path, "rb") as f:
-            data = base64.b64encode(f.read()).decode("utf-8")
-        cid = os.path.basename(full_path).replace(".", "_")
-        return cid, data, mime
+        req = urllib.request.Request(url, headers={"User-Agent": "Findora/3.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read()
+        b64 = base64.b64encode(raw).decode("utf-8")
+        # cid = last segment of URL path without extension, safe for MIME
+        cid = re.sub(r"[^a-zA-Z0-9_]", "_", url.split("/")[-1].split("?")[0])
+        return cid, b64, mime
     except Exception as e:
-        print(f"   ⚠️  Could not load image: {full_path} — {e}")
+        print(f"   ⚠️  Could not download image: {url[:60]}… — {e}")
         return None
 
 
@@ -116,6 +103,13 @@ def item_card_html(label: str, item: Dict, border_color: str, bg: str, img_cid: 
         img_html = f"""
       <tr><td style="padding-top:10px;">
         <img src="cid:{img_cid}" alt="{item.get('title','')}"
+          style="width:100%;max-height:220px;object-fit:cover;border-radius:7px;display:block;" />
+      </td></tr>"""
+    elif item.get("image_path", "").startswith("http"):
+        # Fallback: use direct URL if embedding failed
+        img_html = f"""
+      <tr><td style="padding-top:10px;">
+        <img src="{item['image_path']}" alt="{item.get('title','')}"
           style="width:100%;max-height:220px;object-fit:cover;border-radius:7px;display:block;" />
       </td></tr>"""
 
@@ -233,34 +227,30 @@ def send_email(to_address, recipient_role, recipient_item, matched_item, confide
     print(f"📤 Attempting to send email to: {to_address}")
 
     if not ENABLED:
-        print("❌ EMAIL NOT ENABLED")
-        print("GMAIL_ADDRESS:", GMAIL_ADDRESS)
-        print("GMAIL_APP_PASS:", GMAIL_APP_PASS)
+        print("❌ EMAIL NOT ENABLED — check GMAIL_ADDRESS and GMAIL_APP_PASSWORD env vars")
         return False
 
     rl      = "Lost" if recipient_role == "lost" else "Found"
     subject = f"Findora — Your {rl} item may have been matched ({round(confidence*100)}%)"
 
-    # Load images
-    r_img = load_image_base64(recipient_item.get("image_path", ""))
-    m_img = load_image_base64(matched_item.get("image_path", ""))
+    # Download images from Cloudinary
+    r_img = load_image_from_url(recipient_item.get("image_path", ""))
+    m_img = load_image_from_url(matched_item.get("image_path", ""))
     r_cid = r_img[0] if r_img else None
     m_cid = m_img[0] if m_img else None
 
     try:
-        # Use 'related' so inline images work
         msg = MIMEMultipart("mixed")
         msg["Subject"] = subject
         msg["From"]    = f"{FROM_NAME} <{GMAIL_ADDRESS}>"
         msg["To"]      = to_address
 
-        # Text + HTML as alternatives
         alt = MIMEMultipart("alternative")
         alt.attach(MIMEText(build_text(recipient_role, recipient_item, matched_item, confidence), "plain"))
         alt.attach(MIMEText(build_html(recipient_role, recipient_item, matched_item, confidence, r_cid, m_cid), "html"))
         msg.attach(alt)
 
-        # Attach images with Content-ID
+        # Embed images with Content-ID
         for img_data in [r_img, m_img]:
             if img_data:
                 cid, b64data, mime_type = img_data
@@ -275,9 +265,12 @@ def send_email(to_address, recipient_role, recipient_item, matched_item, confide
             smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASS)
             smtp.sendmail(GMAIL_ADDRESS, to_address, msg.as_string())
 
-        print(f"   📧 Email sent → {to_address} (images: {'✓' if r_cid or m_cid else '✗'})")
+        print(f"   ✅ Email sent → {to_address} (images embedded: {bool(r_cid or m_cid)})")
         return True
 
+    except smtplib.SMTPAuthenticationError:
+        print(f"   ❌ Gmail auth failed — check GMAIL_APP_PASSWORD is a valid App Password (not your login password)")
+        return False
     except Exception as e:
         print(f"   ❌ Email failed → {to_address}: {e}")
         return False
@@ -295,7 +288,7 @@ def notify_match(lost_item: Dict, found_item: Dict, confidence: float):
             print(f"   → Lost user  : {lost_email}")
             send_email(lost_email, "lost", lost_item, found_item, confidence)
         else:
-            print(f"   ⚠️  Invalid lost email: {lost_email}")
+            print(f"   ⚠️  Invalid lost email: '{lost_email}'")
     else:
         print("   ⚠️  Lost item has no contact info")
 
@@ -305,6 +298,6 @@ def notify_match(lost_item: Dict, found_item: Dict, confidence: float):
             print(f"   → Found user : {found_email}")
             send_email(found_email, "found", found_item, lost_item, confidence)
         else:
-            print(f"   ⚠️  Invalid found email: {found_email}")
+            print(f"   ⚠️  Invalid found email: '{found_email}'")
     else:
         print("   ⚠️  Found item has no contact info")
