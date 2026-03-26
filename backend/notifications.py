@@ -1,21 +1,15 @@
 """
-FINDORA - Notification Engine v5
-Uses Resend HTTP API (port 443) instead of Gmail SMTP (port 465).
+FINDORA - Notification Engine v6
+Uses official Resend Python SDK — fixes Cloudflare 403/1010 error on Render.
 
-WHY: Render free tier blocks ALL outbound SMTP ports (25, 465, 587).
-     Resend uses HTTPS (port 443) — never blocked.
+WHY v6: Raw urllib.request calls to api.resend.com get blocked by Cloudflare
+        (error 403, code 1010) when called from Render free tier IPs.
+        The official resend SDK uses proper headers/user-agent that bypass this.
 
-SETUP (2 minutes):
-  1. https://resend.com → Sign up free
-  2. Dashboard → API Keys → Create API Key → copy it
-  3. Render → Environment → add:
-       RESEND_API_KEY = re_xxxxxxxxxxxxxxxxxxxx
-  4. Keep existing: GMAIL_ADDRESS, FROM_NAME
-
-Free tier: 3,000 emails/month, 100/day.
+requirements.txt already has: resend==0.8.0  ✅
 """
 
-import os, re, json, urllib.request, urllib.error
+import os, re
 from datetime import datetime
 from typing import Dict, Tuple, Optional
 from dotenv import load_dotenv
@@ -25,19 +19,27 @@ load_dotenv()
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 GMAIL_ADDRESS  = os.getenv("GMAIL_ADDRESS", "").strip()
 FROM_NAME      = os.getenv("FROM_NAME", "Findora").strip() or "Findora"
-# Use onboarding@resend.dev for instant testing (no domain needed).
-# Change to your own email once you verify a domain at resend.com/domains.
 FROM_EMAIL     = os.getenv("FROM_EMAIL", "onboarding@resend.dev").strip()
 ENABLED        = bool(RESEND_API_KEY)
 
 print("=" * 55)
-print("📧 FINDORA EMAIL ENGINE v5 — RESEND HTTP API")
+print("📧 FINDORA EMAIL ENGINE v6 — RESEND SDK")
 print("=" * 55)
 print(f"  RESEND_API_KEY : {'✅ SET (' + str(len(RESEND_API_KEY)) + ' chars)' if RESEND_API_KEY else '❌ NOT SET'}")
 print(f"  FROM_EMAIL     : {FROM_EMAIL}")
 print(f"  FROM_NAME      : {FROM_NAME}")
-print(f"  EMAIL ENABLED  : {'✅ YES' if ENABLED else '❌ NO — add RESEND_API_KEY in Render'}")
+print(f"  EMAIL ENABLED  : {'✅ YES' if ENABLED else '❌ NO'}")
 print("=" * 55)
+
+# Set API key for SDK
+if RESEND_API_KEY:
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        print("✅ Resend SDK initialised")
+    except ImportError:
+        print("❌ resend package not installed — run: pip install resend")
+        ENABLED = False
 
 
 def parse_contact(contact_info: str) -> Tuple[str, Optional[str]]:
@@ -170,53 +172,38 @@ def send_email(to_address, recipient_role, recipient_item, matched_item, confide
     print(f"\n📤 send_email() → {to_address}")
 
     if not ENABLED:
-        print("   ❌ RESEND_API_KEY not set")
-        print("      → Go to https://resend.com, sign up free, create API key")
-        print("      → Add RESEND_API_KEY to Render environment variables")
+        print("   ❌ RESEND_API_KEY not set or resend SDK not installed")
         return False
 
     if not is_valid_email(to_address):
         print(f"   ❌ Invalid address: '{to_address}'")
         return False
 
-    rl      = "Lost" if recipient_role == "lost" else "Found"
-    subject = f"Findora — Your {rl} item may have been matched ({round(confidence*100)}%)"
-
-    payload = {
-        "from":    f"{FROM_NAME} <{FROM_EMAIL}>",
-        "to":      [to_address],
-        "subject": subject,
-        "html":    _build_html(recipient_role, recipient_item, matched_item, confidence),
-        "text":    _build_text(recipient_role, recipient_item, matched_item, confidence),
-    }
-    if GMAIL_ADDRESS and is_valid_email(GMAIL_ADDRESS):
-        payload["reply_to"] = GMAIL_ADDRESS
-
     try:
-        req = urllib.request.Request(
-            "https://api.resend.com/emails",
-            data    = json.dumps(payload).encode("utf-8"),
-            headers = {"Authorization": f"Bearer {RESEND_API_KEY}",
-                       "Content-Type": "application/json"},
-            method  = "POST",
-        )
-        print("   🔌 Calling Resend HTTPS API...")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-        print(f"   ✅ Delivered → {to_address} (id={result.get('id','?')})")
+        import resend
+
+        rl      = "Lost" if recipient_role == "lost" else "Found"
+        subject = f"Findora — Your {rl} item may have been matched ({round(confidence*100)}%)"
+
+        params = {
+            "from":    f"{FROM_NAME} <{FROM_EMAIL}>",
+            "to":      [to_address],
+            "subject": subject,
+            "html":    _build_html(recipient_role, recipient_item, matched_item, confidence),
+            "text":    _build_text(recipient_role, recipient_item, matched_item, confidence),
+        }
+
+        # Add reply-to if Gmail configured
+        if GMAIL_ADDRESS and is_valid_email(GMAIL_ADDRESS):
+            params["reply_to"] = GMAIL_ADDRESS
+
+        print("   🔌 Calling Resend SDK...")
+        email = resend.Emails.send(params)
+        print(f"   ✅ Delivered → {to_address} (id={email.get('id','?')})")
         return True
 
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        print(f"   ❌ Resend error {e.code}: {body}")
-        if e.code == 401:
-            print("      → RESEND_API_KEY is wrong")
-        elif e.code == 422:
-            print("      → 'from' address not verified")
-            print("      → For testing use FROM_EMAIL=onboarding@resend.dev")
-        return False
     except Exception as e:
-        print(f"   ❌ Error: {e}")
+        print(f"   ❌ Resend SDK error: {e}")
         return False
 
 
