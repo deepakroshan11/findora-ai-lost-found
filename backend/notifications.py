@@ -1,45 +1,35 @@
 """
-FINDORA - Notification Engine v6
-Uses official Resend Python SDK — fixes Cloudflare 403/1010 error on Render.
+FINDORA - Notification Engine v7
+Uses Brevo (formerly Sendinblue) HTTP API — works on Render free tier.
 
-WHY v6: Raw urllib.request calls to api.resend.com get blocked by Cloudflare
-        (error 403, code 1010) when called from Render free tier IPs.
-        The official resend SDK uses proper headers/user-agent that bypass this.
-
-requirements.txt already has: resend==0.8.0  ✅
+WHY v7: Resend requires a verified domain to send to other recipients.
+        Brevo allows sending to ANY email address on free plan (300/day).
+        Uses HTTPS REST API on port 443 — never blocked by Render free tier.
 """
 
-import os, re
+import os, re, json
 from datetime import datetime
 from typing import Dict, Tuple, Optional
+from urllib.request import urlopen, Request
+from urllib.error import URLError
 from dotenv import load_dotenv
 
 load_dotenv()
 
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+BREVO_API_KEY  = os.getenv("BREVO_API_KEY", "").strip()
 GMAIL_ADDRESS  = os.getenv("GMAIL_ADDRESS", "").strip()
 FROM_NAME      = os.getenv("FROM_NAME", "Findora").strip() or "Findora"
-FROM_EMAIL     = os.getenv("FROM_EMAIL", "onboarding@resend.dev").strip()
-ENABLED        = bool(RESEND_API_KEY)
+FROM_EMAIL     = os.getenv("FROM_EMAIL", "adrdeepakroshan480@gmail.com").strip()
+ENABLED        = bool(BREVO_API_KEY)
 
 print("=" * 55)
-print("📧 FINDORA EMAIL ENGINE v6 — RESEND SDK")
+print("📧 FINDORA EMAIL ENGINE v7 — BREVO API")
 print("=" * 55)
-print(f"  RESEND_API_KEY : {'✅ SET (' + str(len(RESEND_API_KEY)) + ' chars)' if RESEND_API_KEY else '❌ NOT SET'}")
+print(f"  BREVO_API_KEY  : {'✅ SET (' + str(len(BREVO_API_KEY)) + ' chars)' if BREVO_API_KEY else '❌ NOT SET'}")
 print(f"  FROM_EMAIL     : {FROM_EMAIL}")
 print(f"  FROM_NAME      : {FROM_NAME}")
 print(f"  EMAIL ENABLED  : {'✅ YES' if ENABLED else '❌ NO'}")
 print("=" * 55)
-
-# Set API key for SDK
-if RESEND_API_KEY:
-    try:
-        import resend
-        resend.api_key = RESEND_API_KEY
-        print("✅ Resend SDK initialised")
-    except ImportError:
-        print("❌ resend package not installed — run: pip install resend")
-        ENABLED = False
 
 
 def parse_contact(contact_info: str) -> Tuple[str, Optional[str]]:
@@ -172,7 +162,7 @@ def send_email(to_address, recipient_role, recipient_item, matched_item, confide
     print(f"\n📤 send_email() → {to_address}")
 
     if not ENABLED:
-        print("   ❌ RESEND_API_KEY not set or resend SDK not installed")
+        print("   ❌ BREVO_API_KEY not set")
         return False
 
     if not is_valid_email(to_address):
@@ -180,30 +170,45 @@ def send_email(to_address, recipient_role, recipient_item, matched_item, confide
         return False
 
     try:
-        import resend
-
         rl      = "Lost" if recipient_role == "lost" else "Found"
         subject = f"Findora — Your {rl} item may have been matched ({round(confidence*100)}%)"
 
-        params = {
-            "from":    f"{FROM_NAME} <{FROM_EMAIL}>",
-            "to":      [to_address],
-            "subject": subject,
-            "html":    _build_html(recipient_role, recipient_item, matched_item, confidence),
-            "text":    _build_text(recipient_role, recipient_item, matched_item, confidence),
+        payload = {
+            "sender":      {"name": FROM_NAME, "email": FROM_EMAIL},
+            "to":          [{"email": to_address}],
+            "subject":     subject,
+            "htmlContent": _build_html(recipient_role, recipient_item, matched_item, confidence),
+            "textContent": _build_text(recipient_role, recipient_item, matched_item, confidence),
         }
 
         # Add reply-to if Gmail configured
         if GMAIL_ADDRESS and is_valid_email(GMAIL_ADDRESS):
-            params["reply_to"] = GMAIL_ADDRESS
+            payload["replyTo"] = {"email": GMAIL_ADDRESS}
 
-        print("   🔌 Calling Resend SDK...")
-        email = resend.Emails.send(params)
-        print(f"   ✅ Delivered → {to_address} (id={email.get('id','?')})")
-        return True
+        data = json.dumps(payload).encode("utf-8")
+        req  = Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data    = data,
+            method  = "POST",
+            headers = {
+                "accept":       "application/json",
+                "content-type": "application/json",
+                "api-key":      BREVO_API_KEY,
+            },
+        )
 
+        print("   🔌 Calling Brevo API...")
+        with urlopen(req, timeout=15) as resp:
+            body   = json.loads(resp.read().decode())
+            msg_id = body.get("messageId", "?")
+            print(f"   ✅ Delivered → {to_address} (messageId={msg_id})")
+            return True
+
+    except URLError as e:
+        print(f"   ❌ Brevo API error: {e}")
+        return False
     except Exception as e:
-        print(f"   ❌ Resend SDK error: {e}")
+        print(f"   ❌ Unexpected error: {e}")
         return False
 
 
