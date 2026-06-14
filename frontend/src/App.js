@@ -1,5 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp, Clock, Sparkles, Shield, Zap, Activity } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp, Clock, Sparkles, Shield, Zap, Activity, LogOut, User, ChevronDown } from 'lucide-react';
+import { useAuth } from './AuthContext';
+import SplashScreen from './SplashScreen';
+import AuthPage from './AuthPage';
+
+const DashboardPage = lazy(() => import('./DashboardPage'));
 
 // ─── IMPORTANT: set REACT_APP_API_URL in Vercel environment variables ─────────
 // e.g. https://findora-ai-lost-found-1.onrender.com
@@ -12,6 +17,41 @@ const FieldError = ({ msg }) => msg ? (
 const Spinner = ({ size = 20, color = '#ffffff' }) => (
   <div style={{ width: size, height: size, border: `2px solid rgba(255,255,255,0.25)`, borderTopColor: color, borderRadius: '50%', animation: 'spin 0.75s linear infinite' }} />
 );
+
+// ─── Match Chime (Web Audio API) ──────────────────────────────────────────────
+function playMatchChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    // Note 1: C5
+    const o1 = ctx.createOscillator();
+    const g1 = ctx.createGain();
+    o1.frequency.value = 523.25;
+    o1.type = 'sine';
+    g1.gain.setValueAtTime(0.25, now);
+    g1.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    o1.connect(g1).connect(ctx.destination);
+    o1.start(now); o1.stop(now + 0.4);
+    // Note 2: E5
+    const o2 = ctx.createOscillator();
+    const g2 = ctx.createGain();
+    o2.frequency.value = 659.25;
+    o2.type = 'sine';
+    g2.gain.setValueAtTime(0.25, now + 0.12);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+    o2.connect(g2).connect(ctx.destination);
+    o2.start(now + 0.12); o2.stop(now + 0.55);
+    // Note 3: G5
+    const o3 = ctx.createOscillator();
+    const g3 = ctx.createGain();
+    o3.frequency.value = 783.99;
+    o3.type = 'sine';
+    g3.gain.setValueAtTime(0.2, now + 0.24);
+    g3.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+    o3.connect(g3).connect(ctx.destination);
+    o3.start(now + 0.24); o3.stop(now + 0.7);
+  } catch (e) { /* AudioContext not available */ }
+}
 
 // ─── AI Agent Status Section ──────────────────────────────────────────────────
 const AgentStatusSection = () => {
@@ -415,14 +455,152 @@ const MatchesTab = ({ matches, loading, setActiveTab, onRefresh }) => (
   </div>
 );
 
+// ─── Login Prompt Modal ───────────────────────────────────────────────────────
+const LoginPromptModal = ({ onClose, message }) => (
+  <div style={s.modalOverlay} onClick={onClose}>
+    <div style={s.modalCard} onClick={e => e.stopPropagation()}>
+      <div style={s.modalIconWrap}>
+        <User size={22} color="#1e3a5f" strokeWidth={1.5} />
+      </div>
+      <h3 style={s.modalTitle}>Sign in required</h3>
+      <p style={s.modalDesc}>{message || 'You need to sign in to access this feature.'}</p>
+      <button onClick={onClose} style={s.modalBtn}>Got it</button>
+    </div>
+  </div>
+);
+
+// ─── Profile Dropdown ─────────────────────────────────────────────────────────
+const ProfileDropdown = ({ user, profile, onDashboard, onSignOut }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const name = profile?.full_name || user?.user_metadata?.full_name || user?.user_metadata?.name || 'User';
+  const email = user?.email || '';
+  const avatarUrl = profile?.avatar_url || user?.user_metadata?.avatar_url || user?.user_metadata?.picture || '';
+  const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'U';
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(!open)} style={s.profileBtn}>
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="" style={s.profileAvatar} referrerPolicy="no-referrer" />
+        ) : (
+          <div style={s.profileInitials}>{initials}</div>
+        )}
+        <ChevronDown size={13} color="#4a6080" style={{ transition: 'transform 0.2s', transform: open ? 'rotate(180deg)' : 'none' }} />
+      </button>
+      {open && (
+        <div style={s.profileDropdown}>
+          <div style={s.profileDropdownHeader}>
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" style={s.profileDropdownAvatar} referrerPolicy="no-referrer" />
+            ) : (
+              <div style={s.profileDropdownInitials}>{initials}</div>
+            )}
+            <div>
+              <p style={s.profileDropdownName}>{name}</p>
+              <p style={s.profileDropdownEmail}>{email}</p>
+            </div>
+          </div>
+          <div style={s.profileDropdownDivider} />
+          <button onClick={() => { setOpen(false); onDashboard(); }} style={s.profileDropdownItem}>
+            <TrendingUp size={14} color="#5c718a" strokeWidth={1.5} /> My Dashboard
+          </button>
+          <button onClick={() => { setOpen(false); onSignOut(); }} style={s.profileDropdownItem}>
+            <LogOut size={14} color="#dc2626" strokeWidth={1.5} /> <span style={{ color: '#dc2626' }}>Sign Out</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Notification Panel ───────────────────────────────────────────────────────
+const NotificationPanel = ({ notifications, open, onClose, onMarkRead }) => {
+  useEffect(() => {
+    if (open && notifications.some(n => !n.read)) {
+      onMarkRead(notifications.filter(n => !n.read).map(n => n.id));
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <>
+      {open && <div style={s.panelOverlay} onClick={onClose} />}
+      <div style={{ ...s.notifPanel, transform: open ? 'translateX(0)' : 'translateX(100%)' }}>
+        <div style={s.notifPanelHeader}>
+          <p style={s.notifPanelTitle}>Notifications</p>
+          <button onClick={onClose} style={s.notifPanelClose}><X size={18} color="#4a6080" /></button>
+        </div>
+        {notifications.length === 0 ? (
+          <div style={s.notifEmpty}>
+            <Bell size={28} color="#c2cfe0" strokeWidth={1} />
+            <p style={{ fontSize: 13, color: '#7a8eaa', marginTop: 8 }}>No notifications yet</p>
+          </div>
+        ) : (
+          <div style={s.notifList}>
+            {notifications.map(n => (
+              <div key={n.id} style={{ ...s.notifItem, background: n.read ? '#fff' : '#f0f7ff' }}>
+                <div style={s.notifDot(n.read)} />
+                <div style={{ flex: 1 }}>
+                  <p style={s.notifItemTitle}>{n.item_title || 'Match found'}</p>
+                  <p style={s.notifItemConf}>{n.confidence ? `${Math.round(n.confidence * 100)}% confidence` : 'Potential match detected'}</p>
+                  <p style={s.notifItemTime}>{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+};
+
+// ─── Onboarding Tour ──────────────────────────────────────────────────────────
+const OnboardingTour = ({ onFinish }) => {
+  const [step, setStep] = useState(0);
+  const steps = [
+    { title: 'Report Items', desc: 'Upload photos and details of lost or found items. Our AI extracts features automatically.', icon: Upload },
+    { title: 'Browse & Search', desc: 'Search through all reported items by title, description, location, or category.', icon: Search },
+    { title: 'AI Matches', desc: 'Our matching engine compares items and notifies both parties when a match is found.', icon: Sparkles },
+  ];
+  const cur = steps[step];
+  const Icon = cur.icon;
+
+  return (
+    <div style={s.tourOverlay}>
+      <div style={s.tourCard}>
+        <div style={s.tourIconWrap}><Icon size={26} color="#1e3a5f" strokeWidth={1.5} /></div>
+        <p style={s.tourStep}>Step {step + 1} of {steps.length}</p>
+        <h3 style={s.tourTitle}>{cur.title}</h3>
+        <p style={s.tourDesc}>{cur.desc}</p>
+        <div style={s.tourActions}>
+          <button onClick={onFinish} style={s.tourSkip}>Skip tour</button>
+          <button onClick={() => step < steps.length - 1 ? setStep(step + 1) : onFinish()} style={s.tourNext}>
+            {step < steps.length - 1 ? 'Next →' : 'Get Started'}
+          </button>
+        </div>
+        <div style={s.tourDots}>
+          {steps.map((_, i) => <div key={i} style={{ ...s.tourDot, background: i === step ? '#1e3a5f' : '#dde3ed' }} />)}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
-const FindoraApp = () => {
+const FindoraApp = ({ showOnboarding, setShowOnboarding }) => {
+  const { user, isGuest, signOut, profile } = useAuth();
   const [activeTab, setActiveTab]   = useState('home');
   const [activeCTA, setActiveCTA]   = useState(null);
   const [items, setItems]           = useState([]);
   const [matches, setMatches]       = useState([]);
   const [loading, setLoading]       = useState(false);
-  const [userId, setUserId]         = useState(localStorage.getItem('findora_user_id') || null);
   const [stats, setStats]           = useState(null);
   const [filterType, setFilterType] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -430,55 +608,72 @@ const FindoraApp = () => {
   const [formErrors, setFormErrors] = useState({});
   const [previewUrl, setPreviewUrl] = useState(null);
   const [backendOnline, setBackendOnline] = useState(true);
+  const [loginPrompt, setLoginPrompt] = useState(null);
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const prevMatchCountRef = useRef(0);
+
+  const userId = user?.id || null;
+
   const [formData, setFormData] = useState({
     title: '', description: '', category: 'wallet', location: '',
     latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0,
-    contactEmail: '', contactPhone: '', image: null
+    contactEmail: user?.email || '', contactPhone: '', image: null
   });
+
+  // Pre-fill email when user logs in
+  useEffect(() => {
+    if (user?.email && !formData.contactEmail) {
+      setFormData(f => ({ ...f, contactEmail: user.email }));
+    }
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Keep-alive ping every 8 minutes to prevent Render sleep ──────────────
   useEffect(() => {
-    const ping = () => fetch(`${API_BASE}/ping`).catch(() => {});
-    ping(); // immediate on load
+    const ping = () => fetch(`${API_BASE}/ping`).then(() => setBackendOnline(true)).catch(() => setBackendOnline(false));
+    ping();
     const t = setInterval(ping, 8 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
-
-  // ── Auto-register ─────────────────────────────────────────────────────────
-  useEffect(() => { if (!userId) autoRegisterUser(); }, [userId]);
 
   // ── Tab data ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === 'browse')  fetchItems();
     if (activeTab === 'home')    fetchStats();
     if (activeTab === 'matches') fetchMatches();
-  }, [activeTab]);
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-poll matches every 15s ───────────────────────────────────────────
   useEffect(() => {
     if (activeTab !== 'matches') return;
     const interval = setInterval(fetchMatches, 15000);
     return () => clearInterval(interval);
-  }, [activeTab]);
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const autoRegisterUser = async () => {
-    try {
-      const res  = await fetch(`${API_BASE}/api/users/register`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: `user${Date.now()}@findora.app`, name: 'User', phone: '' })
-      });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setUserId(data.user_id);
-      localStorage.setItem('findora_user_id', data.user_id);
-      setBackendOnline(true);
-    } catch {
-      setBackendOnline(false);
-      showNotification('Backend offline — please wait a moment and refresh', 'error');
-    }
-  };
+  // ── Poll notifications every 30s ──────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    const fetchNotif = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/notifications/${userId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setNotifications(data);
+          // Play chime on new notifications
+          if (data.length > prevMatchCountRef.current && prevMatchCountRef.current > 0) {
+            playMatchChime();
+          }
+          prevMatchCountRef.current = data.length;
+        }
+      } catch {}
+    };
+    fetchNotif();
+    const t = setInterval(fetchNotif, 30000);
+    return () => clearInterval(t);
+  }, [userId]);
 
-  const showNotification = useCallback((message, type = 'success') => {
+  const showNotificationMsg = useCallback((message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 5000);
   }, []);
@@ -493,12 +688,11 @@ const FindoraApp = () => {
   const fetchItems = async () => {
     try {
       setLoading(true);
-      // status not passed → backend returns ALL items (active + matched)
       const res = await fetch(`${API_BASE}/api/items`);
       if (res.ok) setItems(await res.json());
-      else showNotification('Failed to load items', 'error');
+      else showNotificationMsg('Failed to load items', 'error');
     } catch {
-      showNotification('Cannot reach backend — it may be starting up (30s)', 'error');
+      showNotificationMsg('Cannot reach backend — it may be starting up (30s)', 'error');
     } finally { setLoading(false); }
   };
 
@@ -529,9 +723,9 @@ const FindoraApp = () => {
       });
       setMatches(deduped);
     } catch {
-      showNotification('Failed to load matches', 'error');
+      showNotificationMsg('Failed to load matches', 'error');
     } finally { setLoading(false); }
-  }, [showNotification]);
+  }, [showNotificationMsg]);
 
   const validateForm = () => {
     const errors = {};
@@ -548,8 +742,8 @@ const FindoraApp = () => {
   };
 
   const handleSubmit = async () => {
-    if (!validateForm()) { showNotification('Please fix the errors below', 'error'); return; }
-    if (!userId) { showNotification('Not registered yet — please wait a moment', 'error'); return; }
+    if (!validateForm()) { showNotificationMsg('Please fix the errors below', 'error'); return; }
+    if (!userId) { showNotificationMsg('You must be signed in to report items', 'error'); return; }
     try {
       setLoading(true);
       const contactInfo = formData.contactPhone.trim()
@@ -575,51 +769,80 @@ const FindoraApp = () => {
         throw new Error(err.detail || err.message || `HTTP ${res.status}`);
       }
 
-      showNotification('✅ Item reported! AI is scanning for matches...', 'success');
+      showNotificationMsg('✅ Item reported! AI is scanning for matches...', 'success');
       setFormData({ title: '', description: '', category: 'wallet', location: '',
         latitude: null, longitude: null, itemType: 'lost', rewardAmount: 0,
-        contactEmail: '', contactPhone: '', image: null });
+        contactEmail: user?.email || '', contactPhone: '', image: null });
       setPreviewUrl(null);
       setFormErrors({});
       setTimeout(() => setActiveTab('browse'), 1800);
     } catch (err) {
-      showNotification(err.message || 'Submission failed — backend may be starting up', 'error');
+      showNotificationMsg(err.message || 'Submission failed — backend may be starting up', 'error');
     } finally { setLoading(false); }
   };
 
   const getLocation = () => {
-    if (!navigator.geolocation) { showNotification('Geolocation not supported', 'error'); return; }
+    if (!navigator.geolocation) { showNotificationMsg('Geolocation not supported', 'error'); return; }
     setLoading(true);
     navigator.geolocation.getCurrentPosition(
       pos => {
         setFormData(f => ({ ...f, latitude: pos.coords.latitude, longitude: pos.coords.longitude }));
-        showNotification('Location captured', 'success');
+        showNotificationMsg('Location captured', 'success');
         setLoading(false);
       },
-      () => { showNotification('Could not get location', 'error'); setLoading(false); },
+      () => { showNotificationMsg('Could not get location', 'error'); setLoading(false); },
       { timeout: 10000, enableHighAccuracy: true }
     );
   };
 
+  const handleTabClick = (tabId) => {
+    if (isGuest && (tabId === 'report' || tabId === 'matches')) {
+      setLoginPrompt(tabId === 'report'
+        ? 'Sign in to report lost or found items and receive match notifications.'
+        : 'Sign in to view your AI-powered match results.');
+      return;
+    }
+    setShowDashboard(false);
+    setActiveTab(tabId);
+  };
+
+  const markNotifRead = async (ids) => {
+    try {
+      await fetch(`${API_BASE}/api/notifications/mark-read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notification_ids: ids }),
+      });
+      setNotifications(prev => prev.map(n => ids.includes(n.id) ? { ...n, read: true } : n));
+    } catch {}
+  };
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  if (showDashboard) {
+    return (
+      <div style={s.root}>
+        <style>{globalCss}</style>
+        <header style={s.header}>
+          <div style={s.headerInner}>
+            <div style={s.logo} onClick={() => { setShowDashboard(false); setActiveTab('home'); }} role="button" tabIndex={0}>
+              <div style={s.logoMark}><Search size={15} color="#ffffff" strokeWidth={2} /></div>
+              <div><p style={s.logoName}>Findora</p><p style={s.logoTag}>AI Lost &amp; Found</p></div>
+            </div>
+          </div>
+        </header>
+        <main style={s.main}>
+          <Suspense fallback={<div style={s.loadingState}><Spinner size={28} color="#1e3a5f" /></div>}>
+            <DashboardPage onBack={() => setShowDashboard(false)} />
+          </Suspense>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div style={s.root}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #f0f2f5 !important; -webkit-font-smoothing: antialiased; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.55;transform:scale(.8)} }
-        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .tab-fade { animation: fadeUp 0.28s ease both; }
-        button { cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; }
-        input, textarea, select { font-family: inherit; font-size: inherit; outline: none; color: #0f172a; background: #ffffff; }
-        input::placeholder, textarea::placeholder { color: #9aafc4 !important; }
-        input:focus, textarea:focus, select:focus { border-color: #1e3a5f !important; box-shadow: 0 0 0 3px rgba(30,58,95,0.1); }
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: #f0f2f5; }
-        ::-webkit-scrollbar-thumb { background: #c5d0e0; border-radius: 10px; }
-      `}</style>
+      <style>{globalCss}</style>
 
       {notification && (
         <div style={{ ...s.notification, background: notification.type === 'success' ? '#1a4d33' : '#7f1d1d' }}>
@@ -634,16 +857,41 @@ const FindoraApp = () => {
         </div>
       )}
 
+      {loginPrompt && <LoginPromptModal onClose={() => setLoginPrompt(null)} message={loginPrompt} />}
+
+      {showOnboarding && <OnboardingTour onFinish={() => setShowOnboarding(false)} />}
+
+      <NotificationPanel
+        notifications={notifications}
+        open={notifPanelOpen}
+        onClose={() => setNotifPanelOpen(false)}
+        onMarkRead={markNotifRead}
+      />
+
       <header style={s.header}>
         <div style={s.headerInner}>
-          <div style={s.logo}>
+          <div style={s.logo} onClick={() => { setActiveTab('home'); }} role="button" tabIndex={0}>
             <div style={s.logoMark}><Search size={15} color="#ffffff" strokeWidth={2} /></div>
             <div><p style={s.logoName}>Findora</p><p style={s.logoTag}>AI Lost &amp; Found</p></div>
           </div>
-          <button style={s.bellBtn}>
-            <Bell size={17} strokeWidth={1.5} color="#4a6080" />
-            {matches.length > 0 && <span style={s.bellDot} />}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button style={s.bellBtn} onClick={() => setNotifPanelOpen(true)}>
+              <Bell size={17} strokeWidth={1.5} color="#4a6080" />
+              {unreadCount > 0 && <span style={s.bellBadge}>{unreadCount > 9 ? '9+' : unreadCount}</span>}
+            </button>
+            {user && !isGuest ? (
+              <ProfileDropdown
+                user={user}
+                profile={profile}
+                onDashboard={() => setShowDashboard(true)}
+                onSignOut={signOut}
+              />
+            ) : (
+              <button onClick={() => setLoginPrompt('Sign in to access all features including reporting items and viewing matches.')} style={s.signInHeaderBtn}>
+                Sign in
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -655,9 +903,10 @@ const FindoraApp = () => {
             { id: 'browse',  label: 'Browse' },
             { id: 'matches', label: `Matches${matches.length > 0 ? ` (${matches.length})` : ''}` },
           ].map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            <button key={tab.id} onClick={() => handleTabClick(tab.id)}
               style={{ ...s.navBtn, color: activeTab === tab.id ? '#1e3a5f' : '#7a8eaa', borderBottom: `2px solid ${activeTab === tab.id ? '#1e3a5f' : 'transparent'}`, fontWeight: activeTab === tab.id ? 600 : 500 }}>
               {tab.label}
+              {isGuest && (tab.id === 'report' || tab.id === 'matches') && <span style={s.lockIcon}>🔒</span>}
             </button>
           ))}
         </div>
@@ -665,10 +914,10 @@ const FindoraApp = () => {
 
       <main style={s.main}>
         <div className="tab-fade" key={activeTab}>
-          {activeTab === 'home'    && <HomeTab stats={stats} activeCTA={activeCTA} setActiveCTA={setActiveCTA} setFormData={setFormData} setActiveTab={setActiveTab} />}
-          {activeTab === 'report'  && <ReportTab formData={formData} setFormData={setFormData} formErrors={formErrors} setFormErrors={setFormErrors} previewUrl={previewUrl} setPreviewUrl={setPreviewUrl} loading={loading} handleSubmit={handleSubmit} getLocation={getLocation} showNotification={showNotification} />}
-          {activeTab === 'browse'  && <BrowseTab items={items} loading={loading} filterType={filterType} setFilterType={setFilterType} searchQuery={searchQuery} setSearchQuery={setSearchQuery} setActiveTab={setActiveTab} />}
-          {activeTab === 'matches' && <MatchesTab matches={matches} loading={loading} setActiveTab={setActiveTab} onRefresh={fetchMatches} />}
+          {activeTab === 'home'    && <HomeTab stats={stats} activeCTA={activeCTA} setActiveCTA={setActiveCTA} setFormData={setFormData} setActiveTab={handleTabClick} />}
+          {activeTab === 'report'  && <ReportTab formData={formData} setFormData={setFormData} formErrors={formErrors} setFormErrors={setFormErrors} previewUrl={previewUrl} setPreviewUrl={setPreviewUrl} loading={loading} handleSubmit={handleSubmit} getLocation={getLocation} showNotification={showNotificationMsg} />}
+          {activeTab === 'browse'  && <BrowseTab items={items} loading={loading} filterType={filterType} setFilterType={setFilterType} searchQuery={searchQuery} setSearchQuery={setSearchQuery} setActiveTab={handleTabClick} />}
+          {activeTab === 'matches' && <MatchesTab matches={matches} loading={loading} setActiveTab={handleTabClick} onRefresh={fetchMatches} />}
         </div>
       </main>
 
@@ -702,21 +951,62 @@ const FindoraApp = () => {
   );
 };
 
+// ─── Top-Level App (Splash → Auth → Main) ─────────────────────────────────────
+const App = () => {
+  const { user, loading, isGuest } = useAuth();
+  const [showSplash, setShowSplash] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  if (showSplash) return <SplashScreen onFinish={() => setShowSplash(false)} />;
+
+  if (loading) return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5' }}>
+      <Spinner size={32} color="#1e3a5f" />
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+
+  if (!user && !isGuest) return <AuthPage onSignupComplete={() => setShowOnboarding(true)} />;
+
+  return <FindoraApp showOnboarding={showOnboarding} setShowOnboarding={setShowOnboarding} />;
+};
+
+// ─── Global CSS ───────────────────────────────────────────────────────────────
+const globalCss = `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f0f2f5 !important; -webkit-font-smoothing: antialiased; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.55;transform:scale(.8)} }
+  @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  .tab-fade { animation: fadeUp 0.28s ease both; }
+  button { cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; }
+  input, textarea, select { font-family: inherit; font-size: inherit; outline: none; color: #0f172a; background: #ffffff; }
+  input::placeholder, textarea::placeholder { color: #9aafc4 !important; }
+  input:focus, textarea:focus, select:focus { border-color: #1e3a5f !important; box-shadow: 0 0 0 3px rgba(30,58,95,0.1); }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: #f0f2f5; }
+  ::-webkit-scrollbar-thumb { background: #c5d0e0; border-radius: 10px; }
+`;
+
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = {
   root: { fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#f0f2f5', color: '#0f172a' },
   offlineBanner: { background: '#7f1d1d', color: '#fff', textAlign: 'center', padding: '10px 20px', fontSize: 13, fontWeight: 500 },
   header: { background: '#ffffff', borderBottom: '1px solid #dde3ed', position: 'sticky', top: 0, zIndex: 50 },
   headerInner: { maxWidth: 960, margin: '0 auto', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  logo: { display: 'flex', alignItems: 'center', gap: 10 },
+  logo: { display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' },
   logoMark: { width: 34, height: 34, borderRadius: 10, background: '#1e3a5f', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   logoName: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 17, color: '#0f172a', lineHeight: 1.1 },
   logoTag: { fontSize: 9, color: '#7a8eaa', letterSpacing: '0.09em', textTransform: 'uppercase' },
   bellBtn: { position: 'relative', width: 34, height: 34, borderRadius: 8, background: '#eef1f7', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer' },
-  bellDot: { position: 'absolute', top: 6, right: 6, width: 7, height: 7, background: '#e05252', borderRadius: '50%', border: '1.5px solid #fff' },
+  bellBadge: { position: 'absolute', top: 3, right: 3, minWidth: 16, height: 16, background: '#e05252', borderRadius: 10, border: '1.5px solid #fff', fontSize: 9, fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' },
   nav: { background: '#ffffff', borderBottom: '1px solid #dde3ed', position: 'sticky', top: 54, zIndex: 40 },
   navInner: { maxWidth: 960, margin: '0 auto', padding: '0 20px', display: 'flex' },
-  navBtn: { padding: '12px 18px', fontSize: 13, letterSpacing: '0.01em', transition: 'color 0.2s', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' },
+  navBtn: { padding: '12px 18px', fontSize: 13, letterSpacing: '0.01em', transition: 'color 0.2s', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 4 },
+  lockIcon: { fontSize: 10, opacity: 0.5 },
   main: { maxWidth: 960, margin: '0 auto', padding: '0 20px 60px' },
   page: { paddingTop: 32 },
   pageHeader: { marginBottom: 24 },
@@ -852,6 +1142,57 @@ const s = {
   footerAuthorRole: { fontSize: 11, color: '#7a9bbf', letterSpacing: '0.04em' },
   footerEmail: { fontSize: 12, color: '#94b8d4', textDecoration: 'none', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: '6px 14px', fontWeight: 500 },
   footerCopy: { fontSize: 11, color: '#4a6a8a', marginTop: 2, textAlign: 'center' },
+
+  // ── New V2 styles ──────────────────────────────────────────────────────────
+  signInHeaderBtn: { padding: '7px 16px', background: '#1e3a5f', color: '#fff', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none' },
+
+  // Profile dropdown
+  profileBtn: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px 4px 4px', background: '#eef1f7', borderRadius: 20, border: '1px solid #dde3ed', cursor: 'pointer' },
+  profileAvatar: { width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' },
+  profileInitials: { width: 28, height: 28, borderRadius: '50%', background: '#1e3a5f', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' },
+  profileDropdown: { position: 'absolute', top: 42, right: 0, width: 240, background: '#fff', border: '1px solid #dde3ed', borderRadius: 12, boxShadow: '0 8px 24px rgba(0,0,0,0.1)', zIndex: 100, overflow: 'hidden', animation: 'fadeUp 0.2s ease both' },
+  profileDropdownHeader: { display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px' },
+  profileDropdownAvatar: { width: 36, height: 36, borderRadius: '50%', objectFit: 'cover' },
+  profileDropdownInitials: { width: 36, height: 36, borderRadius: '50%', background: '#1e3a5f', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 },
+  profileDropdownName: { fontSize: 13, fontWeight: 600, color: '#0f172a', marginBottom: 2 },
+  profileDropdownEmail: { fontSize: 11, color: '#7a8eaa' },
+  profileDropdownDivider: { height: 1, background: '#eef1f7' },
+  profileDropdownItem: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 16px', fontSize: 13, fontWeight: 500, color: '#2d4460', cursor: 'pointer', border: 'none', background: 'none', fontFamily: 'inherit', textAlign: 'left', transition: 'background 0.12s' },
+
+  // Notification panel
+  panelOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)', zIndex: 200 },
+  notifPanel: { position: 'fixed', top: 0, right: 0, bottom: 0, width: 340, maxWidth: '90vw', background: '#fff', borderLeft: '1px solid #dde3ed', zIndex: 201, display: 'flex', flexDirection: 'column', transition: 'transform 0.3s ease', boxShadow: '-4px 0 20px rgba(0,0,0,0.08)' },
+  notifPanelHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #dde3ed' },
+  notifPanelTitle: { fontSize: 15, fontWeight: 600, color: '#0f172a' },
+  notifPanelClose: { background: 'none', border: 'none', cursor: 'pointer', padding: 4 },
+  notifEmpty: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40 },
+  notifList: { flex: 1, overflowY: 'auto', padding: '8px 0' },
+  notifItem: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '14px 20px', borderBottom: '1px solid #f0f2f5', transition: 'background 0.15s' },
+  notifDot: (read) => ({ width: 8, height: 8, borderRadius: '50%', background: read ? '#dde3ed' : '#1e3a5f', marginTop: 5, flexShrink: 0 }),
+  notifItemTitle: { fontSize: 13, fontWeight: 600, color: '#0f172a', marginBottom: 3 },
+  notifItemConf: { fontSize: 12, color: '#1a4d33', fontWeight: 500, marginBottom: 2 },
+  notifItemTime: { fontSize: 11, color: '#9aafc4' },
+
+  // Login prompt modal
+  modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  modalCard: { background: '#fff', borderRadius: 16, padding: '32px 28px', maxWidth: 360, width: '100%', textAlign: 'center', animation: 'fadeUp 0.25s ease both' },
+  modalIconWrap: { width: 52, height: 52, borderRadius: 14, background: '#eef1f7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' },
+  modalTitle: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 20, color: '#0f172a', marginBottom: 8 },
+  modalDesc: { fontSize: 13, color: '#5c718a', lineHeight: 1.65, marginBottom: 20 },
+  modalBtn: { padding: '10px 28px', background: '#1e3a5f', color: '#fff', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none' },
+
+  // Onboarding tour
+  tourOverlay: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  tourCard: { background: '#fff', borderRadius: 18, padding: '36px 32px 28px', maxWidth: 380, width: '100%', textAlign: 'center', animation: 'fadeUp 0.3s ease both' },
+  tourIconWrap: { width: 56, height: 56, borderRadius: 16, background: '#eef1f7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px' },
+  tourStep: { fontSize: 10, fontWeight: 700, color: '#7a8eaa', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 10 },
+  tourTitle: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 22, color: '#0f172a', marginBottom: 8 },
+  tourDesc: { fontSize: 13, color: '#5c718a', lineHeight: 1.65, marginBottom: 24 },
+  tourActions: { display: 'flex', gap: 10, justifyContent: 'center' },
+  tourSkip: { padding: '9px 18px', fontSize: 13, color: '#7a8eaa', fontWeight: 500, cursor: 'pointer', border: 'none', background: 'none' },
+  tourNext: { padding: '9px 22px', background: '#1e3a5f', color: '#fff', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none' },
+  tourDots: { display: 'flex', gap: 6, justifyContent: 'center', marginTop: 20 },
+  tourDot: { width: 7, height: 7, borderRadius: '50%', transition: 'background 0.2s' },
 };
 
-export default FindoraApp;
+export default App;

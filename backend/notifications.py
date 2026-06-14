@@ -231,6 +231,34 @@ def notify_match(lost_item: Dict, found_item: Dict, confidence: float) -> None:
         else:
             print(f"   ⚠️  {role} item has no contact_info")
 
+    # ── Insert in-app notifications ───────────────────────────────────────
+    try:
+        from database import db
+        import uuid
+        match_id = str(uuid.uuid4())
+
+        # Notify the lost item owner
+        lost_user_id = lost_item.get("user_id", "")
+        if lost_user_id:
+            db.insert_notification(
+                user_id=lost_user_id,
+                match_id=match_id,
+                item_title=lost_item.get("title", "Your item"),
+                confidence=confidence,
+            )
+
+        # Notify the found item owner
+        found_user_id = found_item.get("user_id", "")
+        if found_user_id:
+            db.insert_notification(
+                user_id=found_user_id,
+                match_id=match_id,
+                item_title=found_item.get("title", "Your item"),
+                confidence=confidence,
+            )
+    except Exception as e:
+        print(f"   ⚠️  In-app notification insert error: {e}")
+
     print(f"{'='*55}\n")
 
 

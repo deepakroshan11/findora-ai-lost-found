@@ -7,11 +7,12 @@ FINDORA - FastAPI Backend v3
 - Keep-alive: /ping endpoint (frontend pings every 8 min)
 """
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Optional, List
 from datetime import datetime
+from pydantic import BaseModel
 import uuid
 import os
 import re
@@ -209,6 +210,42 @@ async def get_stats():
     except Exception as e:
         print(f"❌ Stats error: {e}")
         raise HTTPException(status_code=500, detail="Stats calculation failed")
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+@app.get("/api/notifications/{user_id}")
+async def get_notifications(user_id: str):
+    """Return notifications for a user (newest first)."""
+    try:
+        notifs = db.get_notifications(user_id, limit=50)
+        return notifs
+    except Exception as e:
+        print(f"❌ Notifications error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get notifications")
+
+
+class MarkReadRequest(BaseModel):
+    notification_ids: List[str]
+
+
+@app.post("/api/notifications/mark-read")
+async def mark_notifications_read(body: MarkReadRequest):
+    """Mark notification IDs as read."""
+    db.mark_notifications_read(body.notification_ids)
+    return {"ok": True}
+
+# ── Delete Item ───────────────────────────────────────────────────────────────
+
+@app.delete("/api/items/{item_id}")
+async def delete_item(item_id: str, request: Request):
+    """Delete an item. Owner verified via X-User-Id header."""
+    user_id = request.headers.get("x-user-id", "")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Missing X-User-Id header")
+    deleted = db.delete_item(item_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Item not found or unauthorized")
+    return {"ok": True, "deleted": item_id}
 
 # ── Fast keyword matching (always runs, no ML deps) ───────────────────────────
 

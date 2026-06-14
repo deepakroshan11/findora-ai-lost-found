@@ -295,6 +295,83 @@ class Database:
         row = cur.fetchone()
         return dict(row) if row else None
 
+    # ── Notifications ─────────────────────────────────────────────────────────
+
+    def insert_notification(self, user_id: str, match_id: str, item_title: str, confidence: float) -> bool:
+        try:
+            cur = self._cursor()
+            cur.execute("""
+                INSERT INTO notifications (id, user_id, match_id, item_title, confidence, read, created_at)
+                VALUES (gen_random_uuid(), %s, %s, %s, %s, FALSE, NOW())
+            """, (user_id, match_id, item_title, confidence))
+            self.conn.commit()
+            print(f"🔔 Notification inserted for user {user_id[:8]}...")
+            return True
+        except Exception as e:
+            self.conn.rollback()
+            print(f"⚠️  Notification insert failed (user may not be auth user): {e}")
+            return False
+
+    def get_notifications(self, user_id: str, limit: int = 50) -> List[Dict]:
+        try:
+            cur = self._cursor()
+            cur.execute("""
+                SELECT id, user_id, match_id, item_title, confidence, read, created_at
+                FROM notifications
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (user_id, limit))
+            rows = cur.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                # Convert UUID/datetime to strings for JSON serialization
+                d["id"] = str(d["id"])
+                d["user_id"] = str(d["user_id"])
+                if d.get("created_at"):
+                    d["created_at"] = str(d["created_at"])
+                result.append(d)
+            return result
+        except Exception as e:
+            print(f"⚠️  Get notifications failed: {e}")
+            return []
+
+    def mark_notifications_read(self, notification_ids: List[str]) -> bool:
+        if not notification_ids:
+            return True
+        try:
+            cur = self._cursor()
+            placeholders = ",".join(["%s"] * len(notification_ids))
+            cur.execute(
+                f"UPDATE notifications SET read = TRUE WHERE id IN ({placeholders})",
+                notification_ids,
+            )
+            self.conn.commit()
+            return True
+        except Exception as e:
+            self.conn.rollback()
+            print(f"⚠️  Mark notifications read failed: {e}")
+            return False
+
+    # ── Delete Item ───────────────────────────────────────────────────────────
+
+    def delete_item(self, item_id: str, user_id: str) -> bool:
+        """Delete an item only if it belongs to the given user."""
+        try:
+            cur = self._cursor()
+            cur.execute(
+                "DELETE FROM items WHERE item_id = %s AND user_id = %s",
+                (item_id, user_id),
+            )
+            deleted = cur.rowcount > 0
+            self.conn.commit()
+            return deleted
+        except Exception as e:
+            self.conn.rollback()
+            print(f"❌ Error deleting item: {e}")
+            return False
+
     def close(self):
         try:
             self.conn.close()
