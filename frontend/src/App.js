@@ -456,7 +456,7 @@ const MatchesTab = ({ matches, loading, setActiveTab, onRefresh }) => (
 );
 
 // ─── Login Prompt Modal ───────────────────────────────────────────────────────
-const LoginPromptModal = ({ onClose, message }) => (
+const LoginPromptModal = ({ onClose, onSignIn, message }) => (
   <div style={s.modalOverlay} onClick={onClose}>
     <div style={s.modalCard} onClick={e => e.stopPropagation()}>
       <div style={s.modalIconWrap}>
@@ -464,7 +464,10 @@ const LoginPromptModal = ({ onClose, message }) => (
       </div>
       <h3 style={s.modalTitle}>Sign in required</h3>
       <p style={s.modalDesc}>{message || 'You need to sign in to access this feature.'}</p>
-      <button onClick={onClose} style={s.modalBtn}>Got it</button>
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 8 }}>
+        <button onClick={onClose} style={s.modalCancelBtn}>Cancel</button>
+        <button onClick={onSignIn} style={s.modalBtn}>Sign In</button>
+      </div>
     </div>
   </div>
 );
@@ -857,7 +860,16 @@ const FindoraApp = ({ showOnboarding, setShowOnboarding }) => {
         </div>
       )}
 
-      {loginPrompt && <LoginPromptModal onClose={() => setLoginPrompt(null)} message={loginPrompt} />}
+      {loginPrompt && (
+        <LoginPromptModal
+          onClose={() => setLoginPrompt(null)}
+          onSignIn={() => {
+            setLoginPrompt(null);
+            signOut();
+          }}
+          message={loginPrompt}
+        />
+      )}
 
       {showOnboarding && <OnboardingTour onFinish={() => setShowOnboarding(false)} />}
 
@@ -1179,7 +1191,8 @@ const s = {
   modalIconWrap: { width: 52, height: 52, borderRadius: 14, background: '#eef1f7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' },
   modalTitle: { fontFamily: "'DM Serif Display', serif", fontStyle: 'italic', fontSize: 20, color: '#0f172a', marginBottom: 8 },
   modalDesc: { fontSize: 13, color: '#5c718a', lineHeight: 1.65, marginBottom: 20 },
-  modalBtn: { padding: '10px 28px', background: '#1e3a5f', color: '#fff', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none' },
+  modalBtn: { padding: '10px 28px', background: '#1e3a5f', color: '#fff', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', fontFamily: 'inherit' },
+  modalCancelBtn: { padding: '10px 28px', background: '#eef1f7', color: '#2d4460', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: '1px solid #dde3ed', fontFamily: 'inherit' },
 
   // Onboarding tour
   tourOverlay: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 },
