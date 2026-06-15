@@ -41,6 +41,25 @@ app = FastAPI(
     version     = "3.0.0",
 )
 
+
+# ─── Keep-alive endpoints for Render free tier ────────────────────────────
+@app.get('/ping')
+async def ping():
+    """Health check endpoint - prevents Render spindown"""
+    return {'status': 'ok', 'timestamp': datetime.now().isoformat()}
+
+
+@app.get('/health')
+async def health():
+    """Extended health check endpoint"""
+    return {
+        'status': 'healthy',
+        'app': 'findora',
+        'version': '2.0',
+        'timestamp': datetime.now().isoformat()
+    }
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins     = ["*"],
@@ -73,12 +92,6 @@ async def health_check():
         timestamp = datetime.utcnow().isoformat(),
         database  = "PostgreSQL/Supabase",
     )
-
-@app.get("/ping")
-async def ping():
-    """Lightweight keep-alive — frontend calls every 8 min to prevent Render sleep."""
-    return {"pong": True, "ts": datetime.utcnow().isoformat()}
-
 # ── Users ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/users/register", response_model=UserResponse)
