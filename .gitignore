@@ -46,3 +46,4 @@ Thumbs.db
 # Build outputs
 frontend/build/
 build/
+.vercel
