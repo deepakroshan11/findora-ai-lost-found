@@ -115,6 +115,17 @@ class Database:
                 updated_at TEXT NOT NULL
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                user_id     UUID NOT NULL,
+                match_id    TEXT,
+                item_title  TEXT,
+                confidence  REAL,
+                read        BOOLEAN DEFAULT FALSE,
+                created_at  TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_item_type ON items(item_type)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_status    ON items(status)")
         self.conn.commit()
