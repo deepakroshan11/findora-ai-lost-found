@@ -7,7 +7,7 @@ speak this format, so switching provider is a config change, not a code change:
     LLM_API_KEY    the provider's API key (required — assistant is disabled without it)
     LLM_BASE_URL   default: Groq  https://api.groq.com/openai/v1
                    Gemini:        https://generativelanguage.googleapis.com/v1beta/openai
-    LLM_MODEL      default: llama-3.3-70b-versatile  (must support tool calling)
+    LLM_MODEL      default: openai/gpt-oss-120b  (must support tool calling)
 
 Only `requests` is used — no provider SDK — so every byte on the wire is visible.
 """
@@ -16,7 +16,7 @@ import os
 import requests
 
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 
 class LLMError(Exception):

@@ -79,6 +79,8 @@ class ToolBox:
             return {"error": f"unknown tool '{name}'"}
         if not isinstance(args, dict):
             return {"error": "tool arguments must be a JSON object"}
+        # Some models (e.g. gpt-oss) send {"": {}} for tools with no parameters
+        args = {k: v for k, v in args.items() if k.strip()}
         try:
             return tool(**args)
         except TypeError as exc:

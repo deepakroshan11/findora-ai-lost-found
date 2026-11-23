@@ -214,6 +214,11 @@ def test_run_reports_bad_arguments_instead_of_crashing(box):
     assert "bad arguments" in box.run("search_items", {"nonsense": 1})["error"]
 
 
+def test_run_ignores_blank_argument_keys(box):
+    # gpt-oss sends {"": {}} for tools that take no parameters
+    assert "error" not in box.run("get_stats", {"": {}})
+
+
 def test_run_swallows_unexpected_tool_errors(box, db):
     db.get_all_items.side_effect = RuntimeError("db exploded: secret-connection-string")
     out = box.run("get_stats", {})

@@ -173,7 +173,7 @@ Create a `.env` file in `backend/` — never commit this file.
 | `PORT` | Optional — local dev port (default `8000`; Render sets it automatically) |
 | `LLM_API_KEY` | Optional — free key for the AI Assistant (Groq or Gemini, see below). Without it `/api/agent/chat` returns 503 and the rest of the app is unaffected |
 | `LLM_BASE_URL` | Optional — OpenAI-compatible endpoint (default `https://api.groq.com/openai/v1`) |
-| `LLM_MODEL` | Optional — model name (default `llama-3.3-70b-versatile`) |
+| `LLM_MODEL` | Optional — model name (default `openai/gpt-oss-120b`) |
 
 Templates: [`backend/.env.example`](backend/.env.example) and [`frontend/.env.example`](frontend/.env.example).
 
