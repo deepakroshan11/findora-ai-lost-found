@@ -6,10 +6,11 @@ from chat_agent.llm import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMClient, LLMError
 
 
 class FakeResponse:
-    def __init__(self, status=200, body=None, text=""):
+    def __init__(self, status=200, body=None, text="", headers=None):
         self.status_code = status
         self._body = body
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         if self._body is None:
@@ -70,6 +71,24 @@ def test_rate_limit_is_a_clear_error(client, monkeypatch):
     monkeypatch.setattr(llm_module.requests, "post", lambda *a, **k: FakeResponse(429))
     with pytest.raises(LLMError, match="rate limited"):
         client.chat([])
+
+
+def test_short_rate_limit_is_retried_once(client, monkeypatch):
+    replies = [FakeResponse(429, headers={"retry-after": "0"}), ok({"role": "assistant", "content": "hi"})]
+    monkeypatch.setattr(llm_module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm_module.requests, "post", lambda *a, **k: replies.pop(0))
+    assert client.chat([])["content"] == "hi"
+
+
+def test_long_rate_limit_is_not_waited_for(client, monkeypatch):
+    calls = []
+    def post(*a, **k):
+        calls.append(1)
+        return FakeResponse(429, headers={"x-ratelimit-reset-tokens": "1m5s"})
+    monkeypatch.setattr(llm_module.requests, "post", post)
+    with pytest.raises(LLMError, match="rate limited"):
+        client.chat([])
+    assert len(calls) == 1
 
 
 def test_http_errors_are_wrapped(client, monkeypatch):

@@ -10,7 +10,8 @@ from fake_llm import ScriptedLLM, call, say
 
 client = TestClient(main.app)
 URL = "/api/agent/chat"
-BODY = {"messages": [{"role": "user", "content": "I lost a black wallet"}]}
+GUEST_BODY = {"messages": [{"role": "user", "content": "I lost a black wallet"}]}
+BODY = {**GUEST_BODY, "user_id": "user-9"}          # signed in
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +43,7 @@ def test_happy_path(monkeypatch, db):
     assert body["reply"] == "Found 1 candidate."
     assert body["steps"] == [{"tool": "search_items", "ok": True}]
     assert body["actions"] == []
+    assert [c["item_id"] for c in body["items"]] == ["f1"]          # shown as a card
 
 
 def test_response_never_contains_contact_details(monkeypatch, db):
@@ -74,10 +76,23 @@ def test_user_id_scopes_get_my_items(monkeypatch, db):
     assert "mine" in tool_result and "theirs" not in tool_result
 
 
-def test_guest_gets_a_sign_in_message_from_tools(monkeypatch):
-    llm = use_llm(monkeypatch, [call("get_my_items", {}), say("Please sign in.")])
-    client.post(URL, json=BODY)            # no user_id
-    assert "not signed in" in llm.requests[1][-1]["content"]
+def test_guest_demo_mode_gets_no_tools_and_no_data(monkeypatch, db):
+    db.get_all_items.return_value = [make_item(item_type="found")]
+    llm = use_llm(monkeypatch, [say("Please sign in to search reports.")])
+    body = client.post(URL, json=GUEST_BODY).json()          # no user_id
+    assert body["reply"] == "Please sign in to search reports."
+    assert body["items"] == [] and body["steps"] == []
+    assert llm.tools_seen == [None]                          # the model was given no tools
+    assert "demo mode" in llm.requests[0][0]["content"]
+    db.get_all_items.assert_not_called()
+
+
+def test_guest_tool_calls_are_ignored(monkeypatch, db):
+    """Even if a model tries to call a tool in demo mode, nothing runs."""
+    use_llm(monkeypatch, [call("search_items", {"query": "wallet"})])
+    body = client.post(URL, json=GUEST_BODY).json()
+    assert body["steps"] == [] and body["items"] == []
+    db.get_all_items.assert_not_called()
 
 
 def test_400_when_the_last_message_is_not_from_the_user(monkeypatch):

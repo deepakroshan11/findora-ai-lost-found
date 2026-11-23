@@ -306,6 +306,44 @@ class Database:
         row = cur.fetchone()
         return dict(row) if row else None
 
+    def get_reporter_names(self, user_ids: List[str]) -> Dict[str, str]:
+        """Display names for item owners: {user_id: name}. Missing ids are left out.
+
+        Tries Supabase auth users + profiles first (Google sign-ins keep the name in
+        user metadata), then the legacy `users` table. Never raises.
+        """
+        ids = sorted({str(u) for u in user_ids if u})
+        if not ids:
+            return {}
+        queries = [
+            """SELECT u.id::text AS id,
+                      COALESCE(NULLIF(p.full_name, ''),
+                               u.raw_user_meta_data->>'full_name',
+                               u.raw_user_meta_data->>'name') AS name
+                 FROM auth.users u
+                 LEFT JOIN public.profiles p ON p.id = u.id
+                WHERE u.id::text = ANY(%s)""",
+            "SELECT id::text AS id, full_name AS name FROM public.profiles WHERE id::text = ANY(%s)",
+            "SELECT user_id AS id, name FROM users WHERE user_id = ANY(%s)",
+        ]
+        names: Dict[str, str] = {}
+        for query in queries:
+            missing = [i for i in ids if i not in names]
+            if not missing:
+                break
+            try:
+                cur = self._cursor()
+                cur.execute(query, (missing,))
+                rows = cur.fetchall()
+                self.conn.commit()
+                for row in rows:
+                    if row["name"] and row["name"].strip():
+                        names[row["id"]] = row["name"].strip()
+            except Exception as e:
+                self.conn.rollback()
+                print(f"⚠️  Reporter name lookup skipped: {e}")
+        return names
+
     # ── Notifications ─────────────────────────────────────────────────────────
 
     def insert_notification(self, user_id: str, match_id: str, item_title: str, confidence: float) -> bool:

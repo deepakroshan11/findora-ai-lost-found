@@ -11,9 +11,11 @@ class ScriptedLLM:
     def __init__(self, replies):
         self.replies = list(replies)
         self.requests = []          # deep copies of the `messages` sent each turn
+        self.tools_seen = []        # the `tools` argument of each turn
 
     def chat(self, messages, tools=None):
         self.requests.append(copy.deepcopy(messages))
+        self.tools_seen.append(tools)
         if not self.replies:
             raise AssertionError("ScriptedLLM ran out of replies")
         return self.replies.pop(0)

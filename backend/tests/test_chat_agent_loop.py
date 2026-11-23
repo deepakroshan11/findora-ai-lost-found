@@ -46,14 +46,9 @@ def test_tool_call_then_final_answer(box):
 
 
 def test_every_request_offers_the_tool_list(box):
-    class Spy(ScriptedLLM):
-        def chat(self, messages, tools=None):
-            self.tools_seen = tools
-            return super().chat(messages, tools)
-
-    llm = Spy([say("ok")])
+    llm = ScriptedLLM([say("ok")])
     run_agent(USER, box, llm)
-    assert llm.tools_seen == TOOL_SCHEMAS
+    assert llm.tools_seen == [TOOL_SCHEMAS]
 
 
 def test_invalid_json_arguments_are_reported_back_and_the_loop_continues(box):

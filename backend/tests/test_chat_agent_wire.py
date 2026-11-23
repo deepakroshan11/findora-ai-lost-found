@@ -62,7 +62,7 @@ def test_full_agent_round_trip_over_http(provider, db):
 
     result = run_agent(
         [{"role": "user", "content": "I lost my black wallet"}],
-        ToolBox(db, user_id=None),
+        ToolBox(db, user_id="user-1"),
         llm,
     )
 

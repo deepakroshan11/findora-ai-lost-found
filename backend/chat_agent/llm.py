@@ -12,11 +12,31 @@ speak this format, so switching provider is a config change, not a code change:
 Only `requests` is used — no provider SDK — so every byte on the wire is visible.
 """
 import os
+import re
+import time
 
 import requests
 
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_MODEL = "openai/gpt-oss-120b"
+MAX_RETRY_WAIT = 12        # seconds we are willing to wait once when rate limited
+
+
+def _retry_after(resp) -> float:
+    """Seconds the provider asks us to wait (Retry-After or Groq's reset header)."""
+    headers = getattr(resp, "headers", None) or {}
+    for name in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        value = headers.get(name) or headers.get(name.title())
+        if not value:
+            continue
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        m = re.fullmatch(r"(?:(\d+)m)?([\d.]+)s", str(value).strip())   # e.g. "41.5s", "1m2s"
+        if m:
+            return int(m.group(1) or 0) * 60 + float(m.group(2))
+    return float("inf")
 
 
 class LLMError(Exception):
@@ -44,12 +64,31 @@ class LLMClient:
             raise LLMError("LLM_API_KEY is not set")
 
         payload = {"model": self.model, "messages": messages, "temperature": 0.2}
+        if self.model.startswith("openai/gpt-oss"):
+            payload["reasoning_effort"] = "low"        # fewer hidden tokens, faster replies
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
+        resp = self._post(payload)
+        if resp.status_code == 429:                     # free tiers: wait once if it's short
+            wait = _retry_after(resp)
+            if wait <= MAX_RETRY_WAIT:
+                time.sleep(wait + 0.5)
+                resp = self._post(payload)
+        if resp.status_code == 429:
+            raise LLMError("rate limited by the LLM provider")
+        if resp.status_code != 200:
+            raise LLMError(f"provider returned HTTP {resp.status_code}: {resp.text[:200]}")
+
         try:
-            resp = requests.post(
+            return resp.json()["choices"][0]["message"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise LLMError("unexpected response format from the LLM provider") from exc
+
+    def _post(self, payload):
+        try:
+            return requests.post(
                 f"{self.base_url}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
@@ -60,13 +99,3 @@ class LLMClient:
             )
         except requests.RequestException as exc:
             raise LLMError(f"network error: {exc}") from exc
-
-        if resp.status_code == 429:
-            raise LLMError("rate limited by the LLM provider")
-        if resp.status_code != 200:
-            raise LLMError(f"provider returned HTTP {resp.status_code}: {resp.text[:200]}")
-
-        try:
-            return resp.json()["choices"][0]["message"]
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise LLMError("unexpected response format from the LLM provider") from exc

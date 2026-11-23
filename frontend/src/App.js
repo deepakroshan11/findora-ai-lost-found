@@ -3,7 +3,7 @@ import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp
 import { useAuth } from './AuthContext';
 import SplashScreen from './SplashScreen';
 import AuthPage from './AuthPage';
-import AgentChat from './AgentChat';
+import AgentChat, { useAgentChat } from './AgentChat';
 
 const DashboardPage = lazy(() => import('./DashboardPage'));
 
@@ -619,6 +619,9 @@ const FindoraApp = ({ showOnboarding, setShowOnboarding }) => {
   const prevMatchCountRef = useRef(0);
 
   const userId = user?.id || null;
+  // Assistant conversation lives here so it survives tab switches
+  const agentChat = useAgentChat(API_BASE, userId);
+  const assistantAlertShown = useRef(false);
 
   const [formData, setFormData] = useState({
     title: '', description: '', category: 'wallet', location: '',
@@ -806,6 +809,11 @@ const FindoraApp = ({ showOnboarding, setShowOnboarding }) => {
         : 'Sign in to view your AI-powered match results.');
       return;
     }
+    // Demo mode: the assistant opens, but first remind the guest to sign in (once)
+    if (isGuest && tabId === 'assistant' && !assistantAlertShown.current) {
+      assistantAlertShown.current = true;
+      setLoginPrompt('Sign in to use the full AI Assistant: search reports with photos, check your matches and draft reports. In demo mode it can only explain how Findora works.');
+    }
     setShowDashboard(false);
     setActiveTab(tabId);
   };
@@ -946,7 +954,7 @@ const FindoraApp = ({ showOnboarding, setShowOnboarding }) => {
           {activeTab === 'report'  && <ReportTab formData={formData} setFormData={setFormData} formErrors={formErrors} setFormErrors={setFormErrors} previewUrl={previewUrl} setPreviewUrl={setPreviewUrl} loading={loading} handleSubmit={handleSubmit} getLocation={getLocation} showNotification={showNotificationMsg} />}
           {activeTab === 'browse'  && <BrowseTab items={items} loading={loading} filterType={filterType} setFilterType={setFilterType} searchQuery={searchQuery} setSearchQuery={setSearchQuery} setActiveTab={handleTabClick} />}
           {activeTab === 'matches' && <MatchesTab matches={matches} loading={loading} setActiveTab={handleTabClick} onRefresh={fetchMatches} />}
-          {activeTab === 'assistant' && <AgentChat apiBase={API_BASE} userId={userId} onPrefillReport={applyAgentDraft} />}
+          {activeTab === 'assistant' && <AgentChat chat={agentChat} demo={!userId} onSignIn={() => signOut()} onPrefillReport={applyAgentDraft} />}
         </div>
       </main>
 

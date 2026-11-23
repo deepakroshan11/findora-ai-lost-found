@@ -36,7 +36,7 @@ def test_search_ranks_relevant_items_first_and_skips_irrelevant(box, db):
     ids = [r["item_id"] for r in out["results"]]
     assert ids[0] == "wallet"
     assert "umbrella" not in ids
-    assert out["results"][0]["relevance"] > out["results"][-1]["relevance"]
+    assert "relevance" not in out["results"][0]          # no score the model could misread
 
 
 def test_search_passes_filters_to_the_database(box, db):
@@ -223,3 +223,67 @@ def test_run_swallows_unexpected_tool_errors(box, db):
     db.get_all_items.side_effect = RuntimeError("db exploded: secret-connection-string")
     out = box.run("get_stats", {})
     assert out == {"error": "the tool failed unexpectedly"}
+
+
+# ── demo mode, reporter names, cards, plurals ─────────────────────────────────
+
+def test_demo_mode_blocks_every_tool(db):
+    guest = ToolBox(db, user_id=None)
+    for name, args in [("search_items", {"query": "wallet"}), ("get_stats", {}),
+                       ("get_my_items", {}), ("draft_report", {})]:
+        assert "sign_in_required" in guest.run(name, args)["error"]
+    db.get_all_items.assert_not_called()
+
+
+def test_short_name_is_first_name_and_initial():
+    from chat_agent.tools import short_name
+    assert short_name("Deepak Roshan A") == "Deepak R."
+    assert short_name("Priya") == "Priya"
+    assert short_name("  ") == "" and short_name(None) == ""
+
+
+def test_search_adds_reporter_and_queues_cards(box, db):
+    db.get_all_items.return_value = [
+        make_item(item_id="f1", user_id="u2", item_type="found", title="Black wallet"),
+        make_item(item_id="f2", user_id="user-1", item_type="found", title="Black wallet strap"),
+    ]
+    db.get_reporter_names.return_value = {"u2": "Priya Kumar"}
+    out = box.run("search_items", {"query": "black wallet"})
+    who = {r["item_id"]: r["reported_by"] for r in out["results"]}
+    assert who == {"f1": "Priya K.", "f2": "You"}
+    assert [c["item_id"] for c in box.cards] == ["f1", "f2"]
+    assert all("contact_info" not in c and "user_id" not in c for c in box.cards)
+
+
+def test_reporter_lookup_failure_falls_back_to_generic_name(box, db):
+    db.get_all_items.return_value = [make_item(item_id="f1", user_id="u2", title="Black wallet")]
+    db.get_reporter_names.side_effect = RuntimeError("db down")
+    out = box.run("search_items", {"query": "black wallet"})
+    assert out["results"][0]["reported_by"] == "A Findora user"
+
+
+def test_plural_query_finds_singular_title(box, db):
+    db.get_all_items.return_value = [make_item(item_id="k1", title="Car key", description="Toyota key")]
+    assert box.run("search_items", {"query": "keys"})["count"] == 1
+
+
+def test_weak_hits_far_below_the_best_are_dropped(box, db):
+    db.get_all_items.return_value = [
+        make_item(item_id="good", title="Black wallet", description="leather", location="Library"),
+        make_item(item_id="weak", title="Umbrella", description="black", location="Bus stand"),
+    ]
+    out = box.run("search_items", {"query": "black wallet library"})
+    assert [r["item_id"] for r in out["results"]] == ["good"]
+
+
+def test_empty_query_lists_recent_reports(box, db):
+    db.get_all_items.return_value = [make_item(item_id="new"), make_item(item_id="old")]
+    out = box.run("search_items", {"query": ""})
+    assert [r["item_id"] for r in out["results"]] == ["new", "old"]
+
+
+def test_model_gets_compact_items_without_image_urls(box, db):
+    db.get_all_items.return_value = [make_item(item_id="f1", title="Black wallet")]
+    out = box.run("search_items", {"query": "wallet"})
+    assert "image_path" not in out["results"][0]
+    assert box.cards[0]["image_path"].startswith("https://")      # the UI card still has it

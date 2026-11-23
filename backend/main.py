@@ -267,9 +267,12 @@ async def agent_chat(body: AgentChatRequest, request: Request):
         raise HTTPException(status_code=400, detail=str(exc))
     except LLMError as exc:
         print(f"❌ Assistant error: {exc}")
-        raise HTTPException(status_code=502, detail="The assistant is busy right now — please try again")
+        detail = ("The assistant is getting a lot of questions right now — please try again in a minute"
+                  if "rate limited" in str(exc) else "The assistant is busy right now — please try again")
+        raise HTTPException(status_code=502, detail=detail)
 
-    return {"reply": result.reply, "actions": result.actions, "steps": result.steps}
+    return {"reply": result.reply, "actions": result.actions, "steps": result.steps,
+            "items": result.items}
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 
