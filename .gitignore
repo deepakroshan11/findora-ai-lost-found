@@ -1,9 +1,3 @@
-# In VS Code, create a new file called .gitignore
-# Add this content:
-```
-
-**.gitignore content:**
-```
 # Python
 __pycache__/
 *.py[cod]
@@ -11,11 +5,13 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/
 env/
 *.egg-info/
+.pytest_cache/
 
-# AI Models
-storage/models/*.h5
+# AI models (large binaries — keep them out of git; the engine rebuilds
+# the vision encoder if no saved model is found)
 *.h5
 *.pkl
 *.pth
@@ -24,13 +20,12 @@ storage/models/*.h5
 *.db
 *.sqlite3
 
-# Node modules
-frontend/node_modules/
+# Node
 node_modules/
+frontend/node_modules/
 
-# Images (optional - remove if you want to track images)
-storage/images/*
-ai/storage/images/*
+# Locally uploaded images (production images live on Cloudinary)
+backend/storage/images/
 
 # IDE
 .vscode/
@@ -40,7 +35,7 @@ ai/storage/images/*
 .DS_Store
 Thumbs.db
 
-# Environment variables
+# Environment variables (use .env.example as the template)
 .env
 
 # Build outputs

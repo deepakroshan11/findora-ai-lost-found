@@ -26,8 +26,5 @@ python-dotenv==1.0.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# ── Email notifications ────────────────────────────────────────────────────────
-resend==0.8.0
-
 # ── Supabase (auth verification + notifications) ──────────────────────────────
 supabase>=2.0.0

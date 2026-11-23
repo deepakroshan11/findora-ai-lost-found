@@ -8,12 +8,31 @@ services:
     envVars:
       - key: ALLOWED_ORIGINS
         value: http://localhost:3000,https://findora-ai-lost-found.vercel.app
-      - key: GMAIL_ADDRESS
+      # Secrets — set these in the Render dashboard (never commit values)
+      - key: DATABASE_URL
         sync: false
-      - key: GMAIL_APP_PASSWORD
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      # Optional Reply-To address on match emails
+      - key: GMAIL_ADDRESS
         sync: false
       - key: FROM_NAME
         value: Findora
+      # AI Assistant (optional) — free key from Groq or Google AI Studio
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
     disk:
       name: findora-data
       mountPath: /data

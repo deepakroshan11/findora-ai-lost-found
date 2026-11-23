@@ -3,6 +3,7 @@ import { Camera, MapPin, Search, Bell, Upload, X, Check, AlertCircle, TrendingUp
 import { useAuth } from './AuthContext';
 import SplashScreen from './SplashScreen';
 import AuthPage from './AuthPage';
+import AgentChat from './AgentChat';
 
 const DashboardPage = lazy(() => import('./DashboardPage'));
 
@@ -809,6 +810,20 @@ const FindoraApp = ({ showOnboarding, setShowOnboarding }) => {
     setActiveTab(tabId);
   };
 
+  // The assistant hands over a validated draft; the user adds a photo and submits.
+  const applyAgentDraft = (draft) => {
+    setFormData(f => ({
+      ...f,
+      title: draft.title,
+      description: draft.description,
+      category: draft.category,
+      location: draft.location,
+      itemType: draft.item_type,
+      rewardAmount: draft.reward_amount || 0,
+    }));
+    handleTabClick('report');
+  };
+
   const markNotifRead = async (ids) => {
     try {
       await fetch(`${API_BASE}/api/notifications/mark-read`, {
@@ -914,6 +929,7 @@ const FindoraApp = ({ showOnboarding, setShowOnboarding }) => {
             { id: 'report',  label: 'Report' },
             { id: 'browse',  label: 'Browse' },
             { id: 'matches', label: `Matches${matches.length > 0 ? ` (${matches.length})` : ''}` },
+            { id: 'assistant', label: 'Assistant' },
           ].map(tab => (
             <button key={tab.id} onClick={() => handleTabClick(tab.id)}
               style={{ ...s.navBtn, color: activeTab === tab.id ? '#1e3a5f' : '#7a8eaa', borderBottom: `2px solid ${activeTab === tab.id ? '#1e3a5f' : 'transparent'}`, fontWeight: activeTab === tab.id ? 600 : 500 }}>
@@ -930,6 +946,7 @@ const FindoraApp = ({ showOnboarding, setShowOnboarding }) => {
           {activeTab === 'report'  && <ReportTab formData={formData} setFormData={setFormData} formErrors={formErrors} setFormErrors={setFormErrors} previewUrl={previewUrl} setPreviewUrl={setPreviewUrl} loading={loading} handleSubmit={handleSubmit} getLocation={getLocation} showNotification={showNotificationMsg} />}
           {activeTab === 'browse'  && <BrowseTab items={items} loading={loading} filterType={filterType} setFilterType={setFilterType} searchQuery={searchQuery} setSearchQuery={setSearchQuery} setActiveTab={handleTabClick} />}
           {activeTab === 'matches' && <MatchesTab matches={matches} loading={loading} setActiveTab={handleTabClick} onRefresh={fetchMatches} />}
+          {activeTab === 'assistant' && <AgentChat apiBase={API_BASE} userId={userId} onPrefillReport={applyAgentDraft} />}
         </div>
       </main>
 

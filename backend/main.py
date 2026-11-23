@@ -3,7 +3,7 @@ FINDORA - FastAPI Backend v3
 - Database  : PostgreSQL via Supabase  (persistent across Render restarts)
 - Images    : Cloudinary CDN           (persistent, absolute URLs)
 - AI Match  : keyword engine (fast) + background AI agent (deep)
-- Email     : Gmail SMTP via notifications.py
+- Email     : Brevo HTTP API via notifications.py
 - Keep-alive: /ping endpoint (frontend pings every 8 min)
 """
 
@@ -25,6 +25,11 @@ from models import (
     HealthResponse, validate_category, validate_item_type,
 )
 from notifications import notify_match
+from fastapi.concurrency import run_in_threadpool
+from chat_agent.agent import run_agent
+from chat_agent.llm import LLMClient, LLMError
+from chat_agent.ratelimit import SlidingWindowLimiter
+from chat_agent.tools import ToolBox
 
 # ── Cloudinary config ─────────────────────────────────────────────────────────
 cloudinary.config(
@@ -223,6 +228,48 @@ async def get_stats():
     except Exception as e:
         print(f"❌ Stats error: {e}")
         raise HTTPException(status_code=500, detail="Stats calculation failed")
+
+# ── AI Assistant (chat agent) ─────────────────────────────────────────────────
+
+llm_client   = LLMClient()                                   # reads LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
+chat_limiter = SlidingWindowLimiter(max_calls=20, window_seconds=600)   # per client IP
+
+
+class AgentMessage(BaseModel):
+    role:    str
+    content: str
+
+
+class AgentChatRequest(BaseModel):
+    messages: List[AgentMessage]
+    user_id:  Optional[str] = None
+
+
+@app.post("/api/agent/chat")
+async def agent_chat(body: AgentChatRequest, request: Request):
+    """Chat with the Findora assistant. The agent loop runs in a worker thread
+    because the LLM call is blocking."""
+    if not llm_client.configured:
+        raise HTTPException(status_code=503, detail="The AI assistant is not configured yet")
+
+    # Render sits behind a proxy, so the real client IP is the first X-Forwarded-For entry
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_key = forwarded or (request.client.host if request.client else "unknown")
+    if not chat_limiter.allow(client_key):
+        raise HTTPException(status_code=429, detail="Too many messages — please wait a few minutes")
+
+    toolbox = ToolBox(db, user_id=body.user_id)
+    try:
+        result = await run_in_threadpool(
+            run_agent, [m.model_dump() for m in body.messages], toolbox, llm_client
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LLMError as exc:
+        print(f"❌ Assistant error: {exc}")
+        raise HTTPException(status_code=502, detail="The assistant is busy right now — please try again")
+
+    return {"reply": result.reply, "actions": result.actions, "steps": result.steps}
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 
