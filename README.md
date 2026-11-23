@@ -90,7 +90,7 @@
 ### DevOps
 | Tool | Usage |
 |---|---|
-| GitHub Actions | CI pipeline — 31+ workflow runs (Findora Basic CI) |
+| GitHub Actions | CI on every push/PR — backend pytest suite + frontend production build |
 | Vercel | Auto-deploy frontend on push to `main` |
 | Render | Auto-deploy backend on push to `main` |
 
@@ -114,8 +114,9 @@ confidence = (image_similarity  × 0.40)
            + (text_similarity   × 0.35)
            + (location_score    × 0.15)
            + (temporal_score    × 0.10)
-           + (category_boost    ± 0.05)
+           + (category_boost    +0.10 same category / −0.05 different)
 ```
+- The final score is clamped to a maximum of **95%**
 - Matches stored in DB at ≥ **60%** confidence
 - Email notifications triggered at ≥ **80%** confidence
 
@@ -168,13 +169,61 @@ Create a `.env` file in `backend/` — never commit this file.
 | `BREVO_API_KEY` | Brevo → SMTP & API → API Keys |
 | `FROM_EMAIL` | Your sender email address |
 | `FROM_NAME` | Display name (e.g. `Findora`) |
+| `GMAIL_ADDRESS` | Optional — used as the Reply-To address on match emails |
+| `PORT` | Optional — local dev port (default `8000`; Render sets it automatically) |
+| `LLM_API_KEY` | Optional — free key for the AI Assistant (Groq or Gemini, see below). Without it `/api/agent/chat` returns 503 and the rest of the app is unaffected |
+| `LLM_BASE_URL` | Optional — OpenAI-compatible endpoint (default `https://api.groq.com/openai/v1`) |
+| `LLM_MODEL` | Optional — model name (default `llama-3.3-70b-versatile`) |
+
+Templates: [`backend/.env.example`](backend/.env.example) and [`frontend/.env.example`](frontend/.env.example).
 
 #### Frontend
 | Variable | Description |
 |---|---|
 | `REACT_APP_API_URL` | Your Render backend service URL |
+| `REACT_APP_SUPABASE_URL` | Supabase → Project Settings → API (used for sign-in) |
+| `REACT_APP_SUPABASE_ANON_KEY` | Supabase → Project Settings → API (anon/public key) |
 
 > All secrets are managed via Render and Vercel environment variable dashboards in production.
+
+---
+
+## 🤖 AI Assistant (chat agent)
+
+A tool-calling chat agent, written from scratch (plain `requests`, no LangChain). Users ask in plain
+English — *"I lost a black wallet near the library"* — and the model decides which tools to call.
+
+```
+Browser (AgentChat.js) ──POST /api/agent/chat──► main.py ──► chat_agent/agent.py  (loop, max 5 steps)
+                                                                 │        ▲
+                                                   LLM (any OpenAI-compatible API)
+                                                                 ▼        │
+                                                       chat_agent/tools.py  ──► database
+```
+
+| Tool | What it does |
+|---|---|
+| `search_items` | Keyword search over lost/found reports (public fields only) |
+| `get_my_items` | Lists the signed-in user's own reports |
+| `get_item_matches` | AI matches for one of the user's own items (ownership checked) |
+| `get_stats` | Platform totals |
+| `draft_report` | Prepares a report draft; the UI pre-fills the Report form. **Never submits anything** |
+
+**Privacy by design:** contact info, user IDs and embeddings are never returned to the model
+(whitelisted `public_item`); chat history from the browser is sanitised (only `user`/`assistant`
+roles accepted); item text is treated as data, not instructions; per-IP rate limit (20 requests / 10 min);
+provider errors are not leaked to the browser.
+
+**Enable it (free):**
+1. Get a free key from [Groq](https://console.groq.com/keys) *or* [Google AI Studio](https://aistudio.google.com/apikey).
+2. Set `LLM_API_KEY` (and for Gemini also `LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai`,
+   `LLM_MODEL=gemini-2.0-flash`) in `backend/.env` locally, or in the Render dashboard.
+3. Open the **Assistant** tab in the app.
+
+> Free tiers have rate limits, and Gemini's free tier may use prompts to improve Google products — don't use it with data you consider private.
+
+**Known limitations (v1):** `user_id` is supplied by the client — verify the Supabase JWT server-side before relying on it for
+anything sensitive; search is lexical (could reuse the MiniLM embeddings later).
 
 ---
 
@@ -219,25 +268,72 @@ findora-ai-lost-found/
 │   ├── database.py              ← Supabase PostgreSQL (psycopg2)
 │   ├── models.py                ← Pydantic request/response models
 │   ├── notifications.py         ← Brevo email engine
-│   ├── agent.py                 ← Autonomous AI matching agent
+│   ├── chat_agent/
+│   │   ├── agent.py             ← Tool-calling loop, prompt, history sanitising
+│   │   ├── tools.py             ← Tools + public-field whitelist
+│   │   ├── llm.py               ← OpenAI-compatible client (requests)
+│   │   └── ratelimit.py         ← Sliding-window limiter
 │   ├── ai/
-│   │   └── engine.py            ← MobileNetV3 + MiniLM AI engine
-│   ├── requirements.txt
-│   ├── runtime.txt              ← python-3.10.13
-│   └── render.yaml              ← Render deployment config
+│   │   ├── engine.py            ← MobileNetV3 + MiniLM AI engine
+│   │   └── agent.py             ← Autonomous AI matching agent
+│   ├── tests/                   ← pytest suite (runs offline, no DB or models needed)
+│   ├── requirements.txt         ← full runtime dependencies
+│   ├── requirements-test.txt    ← lightweight dependencies used by CI
+│   ├── pytest.ini
+│   ├── .env.example
+│   └── runtime.txt              ← python-3.10.13
 ├── frontend/
 │   ├── src/
-│   │   ├── App.js               ← Main React app
+│   │   ├── App.js               ← Main React app (report, browse, matches)
+│   │   ├── AgentChat.js         ← AI Assistant chat tab
+│   │   ├── AuthPage.js          ← Email / Google sign-in + guest mode
+│   │   ├── AuthContext.js       ← Supabase auth state
+│   │   ├── DashboardPage.js     ← User dashboard
+│   │   ├── SplashScreen.js
+│   │   ├── supabaseClient.js
 │   │   ├── index.js
-│   │   ├── index.css
-│   │   └── config.js            ← API URL from env
+│   │   └── index.css
 │   ├── public/
 │   │   └── index.html
+│   ├── config.js                ← API URL from env
+│   ├── .env.example
 │   └── package.json
 ├── .github/
-│   └── workflows/               ← GitHub Actions CI (31+ runs)
+│   └── workflows/ci.yml         ← backend tests + frontend build
+├── supabase_schema.sql          ← profiles + notifications tables
+├── render.yaml                  ← Render deployment config (backend)
 └── vercel.json                  ← Vercel frontend deployment
 ```
+
+---
+
+## 🧪 Testing
+
+The backend has a pytest suite that runs fully offline: the database is stubbed,
+no email is sent, and the AI models are never loaded, so it needs no TensorFlow
+or sentence-transformers install.
+
+```bash
+cd backend
+pip install -r requirements-test.txt
+python -m pytest tests -q
+```
+
+| File | Covers |
+|---|---|
+| `test_models.py` | Category / item-type / status validators, request-model validation |
+| `test_keyword_matching.py` | Fast keyword matcher (exact title → 0.92, 0.90 cap, category bonus) |
+| `test_engine_scoring.py` | Confidence formula, location decay, time decay, 95% cap, thresholds |
+| `test_notifications.py` | Contact parsing, email validation, match-alert text, send guards |
+| `test_api.py` | `/ping`, `/health`, report validation + success path, items, matches, stats |
+| `test_chat_agent_tools.py` | Tools, field whitelist, ownership checks, draft validation |
+| `test_chat_agent_loop.py` | Agent loop with a scripted fake LLM, history sanitising, step limit |
+| `test_chat_agent_llm.py` | LLM client errors (missing key, 429, malformed response) |
+| `test_chat_agent_api.py` | `/api/agent/chat` status codes (503/429/400/502) and no error leakage |
+| `test_chat_agent_wire.py` | Real HTTP round-trip against a mock OpenAI-compatible server |
+| `test_ratelimit.py` | Sliding-window limiter |
+
+GitHub Actions runs this suite plus a production build of the React app on every push and pull request.
 
 ---
 

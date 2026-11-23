@@ -1,0 +1,16 @@
+# Lightweight dependencies for the offline test suite (CI installs only this).
+# The full requirements.txt pulls in sentence-transformers / torch, which the
+# tests do not need because the AI models are never loaded.
+fastapi==0.104.1
+pydantic==2.5.0
+python-multipart==0.0.6
+email-validator==2.1.0
+cloudinary==1.36.0
+numpy==1.26.4
+scipy==1.11.4
+scikit-learn==1.3.2
+python-dotenv==1.0.0
+pytest==8.3.3
+# starlette 0.27's TestClient breaks on httpx >= 0.28
+httpx==0.27.2
+requests==2.31.0
